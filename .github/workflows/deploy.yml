@@ -1,4 +1,5 @@
 name: Deploy to Server
+run-name: Deploy ${{ github.ref_name }} to production
 
 on:
   push:
@@ -8,10 +9,14 @@ on:
 
 permissions:
   contents: read
+  deployments: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.DEPLOY_URL }}
 
     steps:
       - name: Check out repository
@@ -22,14 +27,16 @@ jobs:
         env:
           GH_REF_NAME: ${{ github.ref_name }}
           GH_REPOSITORY: ${{ github.repository }}
+          GH_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           DEPLOY_ENABLE_TRAEFIK: ${{ secrets.DEPLOY_ENABLE_TRAEFIK }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
-          envs: GH_REF_NAME,GH_REPOSITORY,GH_TOKEN,DEPLOY_ENABLE_TRAEFIK
+          envs: GH_REF_NAME,GH_REPOSITORY,GH_SHA,GH_TOKEN,GH_RUN_URL,DEPLOY_ENABLE_TRAEFIK
           script_stop: true
           script: |
             set -e
@@ -44,7 +51,7 @@ jobs:
             git checkout -B "${BRANCH}" FETCH_HEAD
             git reset --hard FETCH_HEAD
 
-            echo "Deployment at $(date)" >> deploy.log
+            echo "Deployment at $(date) branch=${BRANCH} commit=${GH_SHA} run=${GH_RUN_URL}" >> deploy.log
 
             if ! sudo -n true 2>/dev/null; then
               echo "Error: passwordless sudo is not configured."
@@ -56,3 +63,24 @@ jobs:
             bash scripts/deploy.sh
 
             echo "Deployment completed successfully."
+
+      - name: Deployment summary
+        if: always()
+        env:
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "## Deployment"
+            echo
+            echo "- Status: ${JOB_STATUS}"
+            echo "- Environment: production"
+            echo "- Branch: \`${{ github.ref_name }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Workflow run: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            if [ -n "${DEPLOY_URL}" ]; then
+              echo "- Site: [${DEPLOY_URL}](${DEPLOY_URL})"
+            else
+              echo "- Site: not configured. Set repository variable \`DEPLOY_URL\`."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
