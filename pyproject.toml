@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "warera-monetary-watch"
+version = "0.1.0"
+description = "WarEra tax income tracker with a live collector and web UI."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiolimiter>=1.1,<2.0",
+  "alembic>=1.14,<2.0",
+  "asyncpg>=0.30,<0.31",
+  "fastapi>=0.115,<0.116",
+  "httpx>=0.28,<0.29",
+  "jinja2>=3.1,<4.0",
+  "pydantic-settings>=2.7,<3.0",
+  "psycopg2-binary>=2.9,<3.0",
+  "sqlalchemy[asyncio]>=2.0.36,<3.0",
+  "uvicorn[standard]>=0.34,<0.35",
+]
+
+[project.optional-dependencies]
+dev = [
+  "aiosqlite>=0.20,<1.0",
+  "pytest>=8.3,<9.0",
+  "pytest-asyncio>=0.24,<0.25",
+  "ruff>=0.9,<0.10",
+]
+
+[project.scripts]
+warera-monetary-watch-web = "warera_monetary_watch.web:main"
+warera-monetary-watch-collector = "warera_monetary_watch.collector:main"
+warera-monetary-watch-rebuild-rollups = "warera_monetary_watch.maintenance:main"
+warera-monetary-watch-status = "warera_monetary_watch.status:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+warera_monetary_watch = ["static/*", "templates/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = ["B008", "E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

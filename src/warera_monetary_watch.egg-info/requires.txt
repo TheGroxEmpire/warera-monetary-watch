@@ -1,0 +1,16 @@
+aiolimiter<2.0,>=1.1
+alembic<2.0,>=1.14
+asyncpg<0.31,>=0.30
+fastapi<0.116,>=0.115
+httpx<0.29,>=0.28
+jinja2<4.0,>=3.1
+pydantic-settings<3.0,>=2.7
+psycopg2-binary<3.0,>=2.9
+sqlalchemy[asyncio]<3.0,>=2.0.36
+uvicorn[standard]<0.35,>=0.34
+
+[dev]
+aiosqlite<1.0,>=0.20
+pytest<9.0,>=8.3
+pytest-asyncio<0.25,>=0.24
+ruff<0.10,>=0.9

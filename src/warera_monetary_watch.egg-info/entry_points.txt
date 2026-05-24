@@ -1,0 +1,5 @@
+[console_scripts]
+warera-monetary-watch-collector = warera_monetary_watch.collector:main
+warera-monetary-watch-rebuild-rollups = warera_monetary_watch.maintenance:main
+warera-monetary-watch-status = warera_monetary_watch.status:main
+warera-monetary-watch-web = warera_monetary_watch.web:main

@@ -1,0 +1,110 @@
+Metadata-Version: 2.4
+Name: warera-monetary-watch
+Version: 0.1.0
+Summary: WarEra tax income tracker with a live collector and web UI.
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: aiolimiter<2.0,>=1.1
+Requires-Dist: alembic<2.0,>=1.14
+Requires-Dist: asyncpg<0.31,>=0.30
+Requires-Dist: fastapi<0.116,>=0.115
+Requires-Dist: httpx<0.29,>=0.28
+Requires-Dist: jinja2<4.0,>=3.1
+Requires-Dist: pydantic-settings<3.0,>=2.7
+Requires-Dist: psycopg2-binary<3.0,>=2.9
+Requires-Dist: sqlalchemy[asyncio]<3.0,>=2.0.36
+Requires-Dist: uvicorn[standard]<0.35,>=0.34
+Provides-Extra: dev
+Requires-Dist: aiosqlite<1.0,>=0.20; extra == "dev"
+Requires-Dist: pytest<9.0,>=8.3; extra == "dev"
+Requires-Dist: pytest-asyncio<0.25,>=0.24; extra == "dev"
+Requires-Dist: ruff<0.10,>=0.9; extra == "dev"
+
+# WarEra Monetary Watch
+
+Dockerized WarEra tax-income watcher with:
+
+- a live wage transaction collector
+- PostgreSQL storage for raw wage events and hourly rollups
+- a FastAPI web UI for global country comparisons and per-country drilldown
+- Traefik routing on `https://warera.xorgress.com/monetary-watch`
+
+## Stack
+
+- Python 3.13
+- FastAPI
+- PostgreSQL
+- SQLAlchemy + Alembic
+- Docker Compose
+
+## Run
+
+1. Copy `.env.example` to `.env`
+2. Set `WARERA_API_TOKEN`
+3. Start:
+
+```bash
+docker compose up -d --build
+```
+
+The app is routed through Traefik at:
+
+```text
+https://warera.xorgress.com/monetary-watch
+```
+
+Override the host with:
+
+```bash
+WARERA_HOST=warera.yourdomain.com docker compose up -d --build
+```
+
+## Services
+
+- `web`: FastAPI application
+- `collector`: background wage poller and enricher
+- `migrate`: Alembic schema migration job
+- `postgres`: application database
+
+## Checks
+
+```bash
+docker compose run --rm test
+```
+
+## Deploy
+
+Apply the current code and database migrations with:
+
+```bash
+scripts/deploy.sh
+```
+
+The deploy script builds the image, runs tests, creates a PostgreSQL backup in
+`backups/`, stops the app services, runs Alembic migrations, and restarts
+`web` and `collector`.
+
+Useful options:
+
+```bash
+scripts/deploy.sh --skip-tests
+scripts/deploy.sh --skip-backup
+scripts/deploy.sh --rebuild-rollups
+scripts/deploy.sh --logs
+```
+
+## Processing Status
+
+Check collector/backfill progress, data freshness, schema version, rollups, and
+active database work with:
+
+```bash
+scripts/status.sh
+```
+
+Continuously refresh it while a deploy, migration, or backfill is running:
+
+```bash
+scripts/status.sh --watch
+scripts/status.sh --watch 10
+```

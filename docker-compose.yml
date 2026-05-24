@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: warera_monetary_watch
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d warera_monetary_watch"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: warera-monetary-watch:local
+    build: .
+    env_file:
+      - .env
+    working_dir: /app
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  collector:
+    image: warera-monetary-watch:local
+    build: .
+    env_file:
+      - .env
+    working_dir: /app
+    command: ["python", "-m", "warera_monetary_watch.collector"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    image: warera-monetary-watch:local
+    build: .
+    container_name: warera-monetary-watch-web
+    env_file:
+      - .env
+    working_dir: /app
+    command: ["python", "-m", "warera_monetary_watch.web"]
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:8000/monetary-watch/static/app.js', timeout=5)\nPY"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.warera-monetary-watch.rule=Host(`${WARERA_HOST:-warera.xorgress.com}`) && (Path(`/monetary-watch`) || PathPrefix(`/monetary-watch/`))"
+      - "traefik.http.routers.warera-monetary-watch.entrypoints=https"
+      - "traefik.http.routers.warera-monetary-watch.tls=true"
+      - "traefik.http.routers.warera-monetary-watch.priority=100"
+      - "traefik.http.routers.warera-monetary-watch.service=warera-monetary-watch"
+      - "traefik.http.services.warera-monetary-watch.loadbalancer.server.port=8000"
+    restart: unless-stopped
+
+  test:
+    image: warera-monetary-watch:local
+    build: .
+    env_file:
+      - .env.example
+    working_dir: /app
+    command: ["pytest"]
+
+volumes:
+  postgres_data:
+
+networks:
+  proxy:
+    external: true

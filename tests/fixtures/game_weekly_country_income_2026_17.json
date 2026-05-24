@@ -1,0 +1,13 @@
+{
+  "source": "War Era game API inventoryAccount.getInventoryAccounts",
+  "source_payload_path": "result.data[].incomes.incomeTaxes",
+  "week": "2026-17",
+  "countries": [
+    {
+      "country_code": "ve",
+      "country_name": "Venezuela",
+      "expected_income_taxes_display": "17.006K",
+      "source_note": "Week 2026-17 uses the UTC account bucket from 2026-04-20T00:00:00Z to 2026-04-27T00:00:00Z."
+    }
+  ]
+}

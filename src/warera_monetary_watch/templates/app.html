@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WarEra Monetary Watch</title>
+    <link rel="stylesheet" href="{{ base_path }}/static/styles.css?v={{ asset_version }}" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">WarEra Economy Monitor</p>
+          <h1>Monetary Watch</h1>
+          <p class="hero-text">
+            Track country income tax from live WarEra wage transactions with global rankings,
+            item-level breakdowns, owner-origin analysis, and core vs non-core filtering.
+          </p>
+        </div>
+        <div class="hero-meta">
+          <div class="meta-card">
+            <span class="meta-label">Selected Window</span>
+            <strong id="coverage-label">Choose filters, then fetch tax data.</strong>
+          </div>
+          <div class="meta-card">
+            <span class="meta-label">Data Coverage</span>
+            <strong id="data-coverage-label">Loading collected range...</strong>
+            <span id="collector-status-label"></span>
+          </div>
+        </div>
+      </header>
+
+      <section class="panel filters-panel">
+        <div class="panel-heading">
+          <h2>Filters</h2>
+          <p>Use hour-aligned UTC ranges for global comparison and country drilldown.</p>
+        </div>
+        <form id="filters-form" class="filters-grid">
+          <label>
+            <span>Country</span>
+            <select id="country-select">
+              <option value="">All countries</option>
+            </select>
+          </label>
+          <label>
+            <span>From</span>
+            <input id="from-input" type="datetime-local" step="3600" />
+          </label>
+          <label>
+            <span>To</span>
+            <input id="to-input" type="datetime-local" step="3600" />
+          </label>
+          <label>
+            <span>Item</span>
+            <select id="item-select">
+              <option value="">All items</option>
+            </select>
+          </label>
+          <label>
+            <span>Owner Country</span>
+            <select id="owner-country-select">
+              <option value="">All countries</option>
+            </select>
+          </label>
+          <label>
+            <span>Core Filter</span>
+            <select id="core-select">
+              <option value="all">All regions</option>
+              <option value="core">Core only</option>
+              <option value="noncore">Non-core only</option>
+            </select>
+          </label>
+          <div class="filter-actions">
+            <button id="fetch-tax-button" type="submit">Fetch Tax Data</button>
+          </div>
+        </form>
+        <p class="fetch-notice" id="fetch-notice" role="status" aria-live="polite">
+          Waiting for filters to be applied.
+        </p>
+      </section>
+
+      <section class="panel" id="overview-panel" {% if not show_global_leaderboard %}hidden{% endif %}>
+        <div class="panel-heading">
+          <h2>Global Tax Leaderboard</h2>
+          <p>Country ranking by tax income over the selected window.</p>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="overview-table">
+            <thead>
+              <tr>
+                <th>Country</th>
+                <th>Tax Income</th>
+                <th>Wages Paid</th>
+                <th>Avg Tax Rate</th>
+                <th>Transactions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="detail-stack" id="country-detail">
+        <section class="panel">
+          <div class="panel-heading">
+            <h2 id="country-title">Country Detail</h2>
+            <p id="country-subtitle">Choose a country to inspect tax income by item, owner origin, and time.</p>
+          </div>
+          <div class="summary-grid" id="summary-grid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Hourly Trend</h2>
+            <p>Tax income and wages paid across the selected hourly window.</p>
+          </div>
+          <div id="timeseries-chart" class="chart-shell"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Tax Income by Item</h2>
+            <p>Wage-derived tax grouped by produced item for the selected country.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="items-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Tax Income</th>
+                  <th>Wages Paid</th>
+                  <th>Avg Tax Rate</th>
+                  <th>Companies</th>
+                  <th>Transactions</th>
+                  <th>Share</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Tax Income by Owner Origin</h2>
+            <p>How much tax comes from companies owned by citizens of each country.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="owners-table">
+              <thead>
+                <tr>
+                  <th>Owner Country</th>
+                  <th>Tax Income</th>
+                  <th>Wages Paid</th>
+                  <th>Avg Tax Rate</th>
+                  <th>Companies</th>
+                  <th>Transactions</th>
+                  <th>Share</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </div>
+
+    <script>
+      window.MONETARY_WATCH = {
+        basePath: {{ base_path|tojson }},
+        selectedCountryCode: {{ selected_country_code|tojson }},
+        showGlobalLeaderboard: {{ show_global_leaderboard|tojson }},
+      };
+    </script>
+    <script type="module" src="{{ base_path }}/static/app.js?v={{ asset_version }}"></script>
+  </body>
+</html>
