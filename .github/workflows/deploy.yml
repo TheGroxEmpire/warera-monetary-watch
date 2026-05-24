@@ -1,0 +1,60 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@master
+        env:
+          GH_REF_NAME: ${{ github.ref_name }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_ENABLE_TRAEFIK: ${{ secrets.DEPLOY_ENABLE_TRAEFIK }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          envs: GH_REF_NAME,GH_REPOSITORY,GH_TOKEN,DEPLOY_ENABLE_TRAEFIK
+          script_stop: true
+          script: |
+            set -e
+            echo "Starting deployment..."
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            BRANCH="${GH_REF_NAME}"
+            REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${GH_REPOSITORY}.git"
+
+            echo "Pulling latest code from ${BRANCH}..."
+            git fetch --depth=1 "${REPO_URL}" "${BRANCH}"
+            git checkout -B "${BRANCH}" FETCH_HEAD
+            git reset --hard FETCH_HEAD
+
+            echo "Deployment at $(date)" >> deploy.log
+
+            if ! sudo -n true 2>/dev/null; then
+              echo "Error: passwordless sudo is not configured."
+              exit 1
+            fi
+
+            if [ -n "${DEPLOY_ENABLE_TRAEFIK:-}" ]; then
+              export ENABLE_TRAEFIK="${DEPLOY_ENABLE_TRAEFIK}"
+            fi
+
+            bash scripts/deploy.sh
+
+            echo "Deployment completed successfully."

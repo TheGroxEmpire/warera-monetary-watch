@@ -81,10 +81,23 @@ if [[ "$ENABLE_TRAEFIK" == "1" ]]; then
 fi
 COMPOSE_ARGS=("${COMPOSE_FILES[@]}" -p "$COMPOSE_PROJECT")
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose "${COMPOSE_ARGS[@]}")
+if docker info >/dev/null 2>&1; then
+  DOCKER=(docker)
+elif sudo -n docker info >/dev/null 2>&1; then
+  DOCKER=(sudo -n docker)
+else
+  echo "Docker is required, but this user cannot access the Docker daemon." >&2
+  exit 1
+fi
+
+if "${DOCKER[@]}" compose version >/dev/null 2>&1; then
+  COMPOSE=("${DOCKER[@]}" compose "${COMPOSE_ARGS[@]}")
 elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose "${COMPOSE_ARGS[@]}")
+  if [[ "${DOCKER[*]}" == "docker" ]]; then
+    COMPOSE=(docker-compose "${COMPOSE_ARGS[@]}")
+  else
+    COMPOSE=(sudo -n docker-compose "${COMPOSE_ARGS[@]}")
+  fi
 else
   echo "Docker Compose is required, but neither 'docker compose' nor 'docker-compose' is available." >&2
   exit 1
@@ -113,8 +126,8 @@ wait_for_postgres() {
 
 echo "Deploying WarEra Monetary Watch from $ROOT_DIR"
 
-if [[ "$ENABLE_TRAEFIK" == "1" ]] && ! docker network inspect "$PROXY_NETWORK" >/dev/null 2>&1; then
-  run docker network create "$PROXY_NETWORK"
+if [[ "$ENABLE_TRAEFIK" == "1" ]] && ! "${DOCKER[@]}" network inspect "$PROXY_NETWORK" >/dev/null 2>&1; then
+  run "${DOCKER[@]}" network create "$PROXY_NETWORK"
 fi
 
 run "${COMPOSE[@]}" up -d "$POSTGRES_SERVICE"
