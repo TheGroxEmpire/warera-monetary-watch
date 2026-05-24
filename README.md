@@ -4,6 +4,8 @@ WarEra Monetary Watch collects wage transactions from the WarEra API, stores
 them in PostgreSQL, and serves a FastAPI dashboard for country tax-income
 analysis.
 
+Live site: [https://warera.xorgress.com/monetary-watch](https://warera.xorgress.com/monetary-watch)
+
 ## Features
 
 - Live wage-event collector with configurable API rate limits
