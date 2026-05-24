@@ -6,6 +6,8 @@ cd "$ROOT_DIR"
 
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-warera-monetary-watch}"
 PROXY_NETWORK="${PROXY_NETWORK:-proxy}"
+ENABLE_TRAEFIK="${ENABLE_TRAEFIK:-0}"
+TRAEFIK_COMPOSE_FILE="${TRAEFIK_COMPOSE_FILE:-docker-compose.traefik.yml}"
 POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-warera_monetary_watch}"
@@ -32,7 +34,9 @@ Options:
 
 Environment overrides:
   COMPOSE_PROJECT     Compose project name. Default: warera-monetary-watch
-  PROXY_NETWORK       External Traefik network name. Default: proxy
+  ENABLE_TRAEFIK      Include docker-compose.traefik.yml when set to 1. Default: 0
+  TRAEFIK_COMPOSE_FILE Optional Traefik compose overlay. Default: docker-compose.traefik.yml
+  PROXY_NETWORK       External Traefik network name when ENABLE_TRAEFIK=1. Default: proxy
   POSTGRES_USER       Postgres user for backups. Default: postgres
   POSTGRES_DB         Postgres database for backups. Default: warera_monetary_watch
   BACKUP_DIR          Local backup directory. Default: ./backups
@@ -71,10 +75,16 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+COMPOSE_FILES=(-f docker-compose.yml)
+if [[ "$ENABLE_TRAEFIK" == "1" ]]; then
+  COMPOSE_FILES+=(-f "$TRAEFIK_COMPOSE_FILE")
+fi
+COMPOSE_ARGS=("${COMPOSE_FILES[@]}" -p "$COMPOSE_PROJECT")
+
 if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose -p "$COMPOSE_PROJECT")
+  COMPOSE=(docker compose "${COMPOSE_ARGS[@]}")
 elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose -p "$COMPOSE_PROJECT")
+  COMPOSE=(docker-compose "${COMPOSE_ARGS[@]}")
 else
   echo "Docker Compose is required, but neither 'docker compose' nor 'docker-compose' is available." >&2
   exit 1
@@ -103,7 +113,7 @@ wait_for_postgres() {
 
 echo "Deploying WarEra Monetary Watch from $ROOT_DIR"
 
-if ! docker network inspect "$PROXY_NETWORK" >/dev/null 2>&1; then
+if [[ "$ENABLE_TRAEFIK" == "1" ]] && ! docker network inspect "$PROXY_NETWORK" >/dev/null 2>&1; then
   run docker network create "$PROXY_NETWORK"
 fi
 

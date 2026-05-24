@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 src/warera_monetary_watch/__init__.py
@@ -31,5 +32,6 @@ tests/test_analytics.py
 tests/test_app_assets.py
 tests/test_collector_helpers.py
 tests/test_config.py
+tests/test_game_income_fixtures.py
 tests/test_status.py
 tests/test_warera_client.py

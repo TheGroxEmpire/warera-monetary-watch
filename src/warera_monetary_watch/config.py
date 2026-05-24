@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     warera_api_lookup_batch_size: int = Field(default=100, alias="WARERA_API_LOOKUP_BATCH_SIZE")
     warera_api_lookup_concurrency: int = Field(default=15, alias="WARERA_API_LOOKUP_CONCURRENCY")
     app_base_path: str = Field(default="/monetary-watch", alias="APP_BASE_PATH")
-    warera_host: str = Field(default="warera.xorgress.com", alias="WARERA_HOST")
+    warera_host: str = Field(default="warera.example.com", alias="WARERA_HOST")
     web_host: str = Field(default="0.0.0.0", alias="WEB_HOST")
     web_port: int = Field(default=8000, alias="WEB_PORT")
     collector_poll_interval_seconds: int = Field(default=30, alias="COLLECTOR_POLL_INTERVAL_SECONDS")
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     authentik_auth_enabled: bool = Field(default=False, alias="AUTHENTIK_AUTH_ENABLED")
     authentik_base_url: str = Field(
-        default="https://authentik.xorgress.com",
+        default="https://auth.example.com",
         alias="AUTHENTIK_BASE_URL",
     )
     authentik_client_id: str = Field(default="", alias="AUTHENTIK_CLIENT_ID")

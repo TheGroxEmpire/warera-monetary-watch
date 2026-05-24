@@ -1,0 +1,19 @@
+services:
+  web:
+    networks:
+      - default
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK:-proxy}"
+      - "traefik.http.routers.warera-monetary-watch.rule=Host(`${WARERA_HOST:-warera.example.com}`) && (Path(`${APP_BASE_PATH:-/monetary-watch}`) || PathPrefix(`${APP_BASE_PATH:-/monetary-watch}/`))"
+      - "traefik.http.routers.warera-monetary-watch.entrypoints=https"
+      - "traefik.http.routers.warera-monetary-watch.tls=true"
+      - "traefik.http.routers.warera-monetary-watch.priority=100"
+      - "traefik.http.routers.warera-monetary-watch.service=warera-monetary-watch"
+      - "traefik.http.services.warera-monetary-watch.loadbalancer.server.port=${WEB_PORT:-8000}"
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-proxy}

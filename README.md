@@ -1,41 +1,61 @@
 # WarEra Monetary Watch
 
-Dockerized WarEra tax-income watcher with:
+WarEra Monetary Watch collects wage transactions from the WarEra API, stores
+them in PostgreSQL, and serves a FastAPI dashboard for country tax-income
+analysis.
 
-- a live wage transaction collector
+## Features
+
+- Live wage-event collector with configurable API rate limits
 - PostgreSQL storage for raw wage events and hourly rollups
-- a FastAPI web UI for global country comparisons and per-country drilldown
-- Traefik routing on `https://warera.xorgress.com/monetary-watch`
+- Global country leaderboard and per-country drilldowns
+- Item, owner-country, core-region, and hourly time-window filters
+- Optional authentik OIDC gate for private deployments
 
 ## Stack
 
-- Python 3.13
+- Python 3.12+
 - FastAPI
 - PostgreSQL
 - SQLAlchemy + Alembic
 - Docker Compose
 
-## Run
+## Quick Start
 
-1. Copy `.env.example` to `.env`
-2. Set `WARERA_API_TOKEN`
-3. Start:
+Copy the example environment and set your WarEra API token:
+
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+
+Start the app:
 
 ```bash
 docker compose up -d --build
 ```
 
-The app is routed through Traefik at:
+Open:
 
 ```text
-https://warera.xorgress.com/monetary-watch
+http://localhost:8000/monetary-watch
 ```
 
-Override the host with:
+The default Compose file is local-first and publishes the web service on
+`WEB_PUBLISHED_PORT`, which defaults to `8000`.
 
-```bash
-WARERA_HOST=warera.yourdomain.com docker compose up -d --build
-```
+## Configuration
+
+Key settings live in `.env`:
+
+- `WARERA_API_TOKEN`: required for the collector
+- `WARERA_API_BASE_URL`: WarEra API endpoint
+- `APP_BASE_PATH`: dashboard base path, default `/monetary-watch`
+- `WEB_PORT`: port used inside the web container
+- `WEB_PUBLISHED_PORT`: host port exposed by Docker Compose
+- `RAW_RETENTION_DAYS`: retention window for raw wage events and hourly rollups
+
+Do not commit `.env`, SQL dumps, database files, or files under `backups/`.
 
 ## Services
 
@@ -43,37 +63,57 @@ WARERA_HOST=warera.yourdomain.com docker compose up -d --build
 - `collector`: background wage poller and enricher
 - `migrate`: Alembic schema migration job
 - `postgres`: application database
+- `test`: containerized test runner
 
 ## Checks
+
+With Docker:
 
 ```bash
 docker compose run --rm test
 ```
 
-## Authentik Access
+With a local Python environment:
 
-Monetary Watch uses its own authentik OIDC application named
-`Warera Monetary Watch`, not the shared Warera Intel proxy provider. Users must
-belong to `warera-monetary-watch-access` to open `/monetary-watch`.
+```bash
+python -m pip install -e ".[dev]"
+pytest
+ruff check .
+```
 
-To add dashboard-managed users:
+## Optional Traefik
 
-1. Open `https://authentik.xorgress.com/if/admin/`.
-2. Go to `Directory > Users`, choose the user folder, and click `Create`.
-3. Set a unique username, optional display name/email, and leave the user active.
-4. Open the created user, use `Reset password`, and set the password.
-5. Open the user's `Groups` tab and add them to `warera-monetary-watch-access`.
+For Traefik deployments, use the overlay file and set a real host in `.env`:
 
-To remove access, remove the user from `warera-monetary-watch-access` or
-deactivate the user.
+```bash
+WARERA_HOST=warera.example.com \
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
+```
 
-## Retention
+The overlay expects an external Docker network named `proxy` by default. Change
+it with `PROXY_NETWORK`.
 
-`RAW_RETENTION_DAYS` controls how long wage events and hourly tax rollups are
-kept. The collector applies this retention pass periodically; the default is
-90 days.
+## Optional Authentik
 
-## Deploy
+Set these values to enable the authentik OIDC gate:
+
+```env
+AUTHENTIK_AUTH_ENABLED=true
+AUTHENTIK_BASE_URL=https://auth.example.com
+AUTHENTIK_CLIENT_ID=...
+AUTHENTIK_CLIENT_SECRET=...
+AUTH_SESSION_SECRET_KEY=...
+AUTHENTIK_ALLOWED_GROUP=warera-monetary-watch-access
+WARERA_HOST=warera.example.com
+```
+
+Configure the authentik redirect URI as:
+
+```text
+https://<WARERA_HOST><APP_BASE_PATH>/auth/callback
+```
+
+## Operations
 
 Apply the current code and database migrations with:
 
@@ -94,18 +134,27 @@ scripts/deploy.sh --rebuild-rollups
 scripts/deploy.sh --logs
 ```
 
-## Processing Status
+For Traefik deploys:
+
+```bash
+ENABLE_TRAEFIK=1 scripts/deploy.sh
+```
 
 Check collector/backfill progress, data freshness, schema version, rollups, and
 active database work with:
 
 ```bash
 scripts/status.sh
-```
-
-Continuously refresh it while a deploy, migration, or backfill is running:
-
-```bash
 scripts/status.sh --watch
 scripts/status.sh --watch 10
 ```
+
+Expand the collected historical window with:
+
+```bash
+scripts/expand-window.sh
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -11,7 +11,13 @@ from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,7 +92,7 @@ def decode_signed_payload(value: str | None, secret: str) -> dict[str, object] |
     except (ValueError, json.JSONDecodeError):
         return None
     expires_at = payload.get("exp")
-    if not isinstance(expires_at, (int, float)) or expires_at < time():
+    if not isinstance(expires_at, int | float) or expires_at < time():
         return None
     return payload if isinstance(payload, dict) else None
 

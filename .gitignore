@@ -1,7 +1,38 @@
-/.env
-/.pytest_cache
-/.ruff_cache
-/.venv
-/.venv312
-/backups
-/build
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data and database dumps
+backups/
+*.sql
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+.venv*/
+venv/
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# Logs and local scratch files
+*.log
+.cache/
+tmp/
+temp/

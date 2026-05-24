@@ -82,9 +82,9 @@ def test_auth_login_uses_warera_monetary_watch_client() -> None:
             DATABASE_URL="sqlite+aiosqlite:///./test.db",
             WARERA_API_BASE_URL="https://example.com/trpc",
             WARERA_API_TOKEN="test-token",
-            WARERA_HOST="warera.xorgress.com",
+            WARERA_HOST="warera.example.com",
             AUTHENTIK_AUTH_ENABLED=True,
-            AUTHENTIK_BASE_URL="https://authentik.xorgress.com",
+            AUTHENTIK_BASE_URL="https://auth.example.com",
             AUTHENTIK_CLIENT_ID="warera-monetary-watch-client",
             AUTHENTIK_CLIENT_SECRET="client-secret",
             AUTH_SESSION_SECRET_KEY="session-secret",
@@ -99,7 +99,7 @@ def test_auth_login_uses_warera_monetary_watch_client() -> None:
 
     assert response.status_code == 307
     assert "client_id=warera-monetary-watch-client" in response.headers["location"]
-    assert "redirect_uri=https%3A%2F%2Fwarera.xorgress.com%2Fmonetary-watch%2Fauth%2Fcallback" in response.headers["location"]
+    assert "redirect_uri=https%3A%2F%2Fwarera.example.com%2Fmonetary-watch%2Fauth%2Fcallback" in response.headers["location"]
     assert "warera_monetary_watch_auth_state=" in response.headers["set-cookie"]
 
 

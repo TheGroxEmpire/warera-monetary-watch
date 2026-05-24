@@ -40,28 +40,17 @@ services:
   web:
     image: warera-monetary-watch:local
     build: .
-    container_name: warera-monetary-watch-web
     env_file:
       - .env
     working_dir: /app
     command: ["python", "-m", "warera_monetary_watch.web"]
+    ports:
+      - "${WEB_PUBLISHED_PORT:-8000}:${WEB_PORT:-8000}"
     healthcheck:
-      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:8000/monetary-watch/static/app.js', timeout=5)\nPY"]
+      test: ["CMD-SHELL", "python - <<'PY'\nimport os\nimport urllib.request\nbase_path = (os.getenv('APP_BASE_PATH') or '/monetary-watch').rstrip('/') or '/'\nport = os.getenv('WEB_PORT') or '8000'\nurllib.request.urlopen(f'http://127.0.0.1:{port}{base_path}/static/app.js', timeout=5)\nPY"]
       interval: 15s
       timeout: 5s
       retries: 5
-    networks:
-      - default
-      - proxy
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=proxy"
-      - "traefik.http.routers.warera-monetary-watch.rule=Host(`${WARERA_HOST:-warera.xorgress.com}`) && (Path(`/monetary-watch`) || PathPrefix(`/monetary-watch/`))"
-      - "traefik.http.routers.warera-monetary-watch.entrypoints=https"
-      - "traefik.http.routers.warera-monetary-watch.tls=true"
-      - "traefik.http.routers.warera-monetary-watch.priority=100"
-      - "traefik.http.routers.warera-monetary-watch.service=warera-monetary-watch"
-      - "traefik.http.services.warera-monetary-watch.loadbalancer.server.port=8000"
     restart: unless-stopped
 
   test:
@@ -74,7 +63,3 @@ services:
 
 volumes:
   postgres_data:
-
-networks:
-  proxy:
-    external: true
