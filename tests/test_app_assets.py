@@ -114,6 +114,7 @@ def test_frontend_fetches_aggregate_tax_endpoints() -> None:
     assert "startOfWeekMondayUtc(maxTo)" in app_js
     assert "dataWindow.maxTo ?? ceilHourUtc(new Date())" in app_js
     assert "const maxTo = toDate ? ceilHourUtc(toDate) : null;" in app_js
+    assert "Could not load collected range." in app_js
     assert "addHours(maxTo, -24)" not in app_js
     assert '"/api/v1/dataset"' not in app_js
     assert "fetchJson(`/api/v1/countries/${currentCountryCode}/summary`" not in app_js

@@ -758,6 +758,8 @@ els.form.addEventListener("submit", async (event) => {
 
 bootstrap().catch((error) => {
   console.error(error);
+  els.dataCoverageLabel.textContent = "Could not load collected range.";
+  els.collectorStatusLabel.textContent = "";
   if (els.fetchNotice) {
     els.fetchNotice.textContent = `Could not load Monetary Watch: ${error.message}`;
   }

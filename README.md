@@ -52,6 +52,7 @@ Key settings live in `.env`:
 
 - `WARERA_API_TOKEN`: required for the collector
 - `WARERA_API_BASE_URL`: WarEra API endpoint
+- `DATABASE_URL`: async SQLAlchemy URL; the Compose default uses `monetary-watch-postgres` to avoid name collisions on shared Docker networks
 - `APP_BASE_PATH`: dashboard base path, default `/monetary-watch`
 - `WEB_PORT`: port used inside the web container
 - `WEB_PUBLISHED_PORT`: host port exposed by Docker Compose
