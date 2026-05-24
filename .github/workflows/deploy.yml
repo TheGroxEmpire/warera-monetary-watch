@@ -51,9 +51,7 @@ jobs:
               exit 1
             fi
 
-            if [ -n "${DEPLOY_ENABLE_TRAEFIK:-}" ]; then
-              export ENABLE_TRAEFIK="${DEPLOY_ENABLE_TRAEFIK}"
-            fi
+            export ENABLE_TRAEFIK="${DEPLOY_ENABLE_TRAEFIK:-1}"
 
             bash scripts/deploy.sh
 
