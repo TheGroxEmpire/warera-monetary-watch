@@ -6,6 +6,8 @@ analysis.
 
 Live site: [https://warera.xorgress.com/monetary-watch](https://warera.xorgress.com/monetary-watch)
 
+Support: [Buy Me a Coffee](https://buymeacoffee.com/groxempire)
+
 ## Features
 
 - Live wage-event collector with configurable API rate limits
