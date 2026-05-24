@@ -71,22 +71,37 @@ body {
   line-height: 1.6;
 }
 
-.support-link {
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.hero-link {
   display: inline-flex;
   align-items: center;
   min-height: 42px;
-  margin-top: 16px;
   padding: 0 14px;
-  border: 1px solid rgba(255, 191, 71, 0.3);
   border-radius: 14px;
-  background: var(--accent);
-  color: #1d1400;
   font-weight: 700;
   text-decoration: none;
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
 
-.support-link:hover {
+.hero-link-primary {
+  border: 1px solid rgba(255, 191, 71, 0.3);
+  background: var(--accent);
+  color: #1d1400;
+}
+
+.hero-link-secondary {
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.hero-link:hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 22px rgba(255, 191, 71, 0.22);
 }
