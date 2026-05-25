@@ -108,7 +108,7 @@ def make_settings(max_pages: int) -> Settings:
 
 
 def test_compute_income_tax_money_uses_decimal_precision() -> None:
-    assert compute_income_tax_money(Decimal("4.11"), Decimal("10")) == Decimal("0.373636")
+    assert compute_income_tax_money(Decimal("4.11"), Decimal("10")) == Decimal("0.411000")
     assert compute_income_tax_money(Decimal("4.11"), Decimal("0")) == Decimal("0.000000")
 
 
@@ -207,7 +207,7 @@ async def test_retention_deletes_old_raw_events_and_hourly_rollups() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rebuild_rollups_keeps_non_core_tax_on_operating_country_without_extra_split() -> None:
+async def test_rebuild_rollups_splits_non_core_tax_between_occupier_and_original_country() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -249,15 +249,25 @@ async def test_rebuild_rollups_keeps_non_core_tax_on_operating_country_without_e
         await service._rebuild_rollups(session, {event_hour})
         await session.commit()
 
-        rows = list((await session.execute(select(HourlyTaxRollup))).scalars())
+        rows = list(
+            (
+                await session.execute(
+                    select(HourlyTaxRollup).order_by(HourlyTaxRollup.operating_country_id)
+                )
+            ).scalars()
+        )
 
     await engine.dispose()
 
-    assert len(rows) == 1
-    assert rows[0].operating_country_id == "country-occupier"
-    assert rows[0].is_core_region is False
-    assert rows[0].tax_income_sum == Decimal("10.000000")
-    assert rows[0].wage_money_sum == Decimal("100.000000")
+    assert len(rows) == 2
+    assert rows[0].operating_country_id == "country-core-owner"
+    assert rows[0].is_core_region is True
+    assert rows[0].tax_income_sum == Decimal("4.000000")
+    assert rows[0].wage_money_sum == Decimal("40.000000")
+    assert rows[1].operating_country_id == "country-occupier"
+    assert rows[1].is_core_region is False
+    assert rows[1].tax_income_sum == Decimal("6.000000")
+    assert rows[1].wage_money_sum == Decimal("60.000000")
 
 
 @pytest.mark.asyncio
@@ -395,7 +405,7 @@ def test_enrich_wage_transaction_uses_historical_tax_rate_when_available() -> No
     )
 
     assert enriched[0].income_tax_rate == Decimal("7")
-    assert enriched[0].income_tax_money == Decimal("0.268879")
+    assert enriched[0].income_tax_money == Decimal("0.287700")
 
 
 @pytest.mark.asyncio
@@ -641,7 +651,7 @@ def test_enrich_wage_transaction_success() -> None:
     assert event.is_core_region is True
     assert event.region_resistance == Decimal("100")
     assert event.region_resistance_max == Decimal("100")
-    assert event.income_tax_money == Decimal("0.373636")
+    assert event.income_tax_money == Decimal("0.411000")
     assert event.event_hour == datetime(2026, 4, 21, 9, 0, tzinfo=UTC)
 
 

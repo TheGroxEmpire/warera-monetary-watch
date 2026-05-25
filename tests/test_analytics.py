@@ -25,17 +25,17 @@ def test_calculate_core_owner_share_ratio_returns_zero_for_unoccupied_regions() 
     ) == Decimal("0")
 
 
-def test_calculate_core_owner_share_ratio_declines_to_forty_percent() -> None:
+def test_calculate_core_owner_share_ratio_scales_to_forty_percent() -> None:
     assert calculate_core_owner_share_ratio(
         is_occupied=True,
         resistance=Decimal("0"),
         resistance_max=Decimal("100"),
-    ) == Decimal("1.0")
+    ) == Decimal("0.0")
     assert calculate_core_owner_share_ratio(
         is_occupied=True,
         resistance=Decimal("50"),
         resistance_max=Decimal("100"),
-    ) == Decimal("0.70")
+    ) == Decimal("0.20")
     assert calculate_core_owner_share_ratio(
         is_occupied=True,
         resistance=Decimal("100"),
@@ -48,12 +48,12 @@ def test_calculate_occupier_share_ratio_scales_to_sixty_percent() -> None:
         is_occupied=True,
         resistance=Decimal("0"),
         resistance_max=Decimal("100"),
-    ) == Decimal("0.0")
+    ) == Decimal("1.0")
     assert calculate_occupier_share_ratio(
         is_occupied=True,
         resistance=Decimal("50"),
         resistance_max=Decimal("100"),
-    ) == Decimal("0.30")
+    ) == Decimal("0.80")
     assert calculate_occupier_share_ratio(
         is_occupied=True,
         resistance=Decimal("100"),
@@ -70,10 +70,10 @@ def test_split_tax_for_region_control_splits_between_occupier_and_core_owner() -
         resistance_max=Decimal("100"),
     )
 
-    assert split["core_owner_tax"] == Decimal("8.500")
-    assert split["occupier_tax"] == Decimal("1.500")
-    assert split["core_owner_wages"] == Decimal("85.00")
-    assert split["occupier_wages"] == Decimal("15.00")
+    assert split["core_owner_tax"] == Decimal("1.000")
+    assert split["occupier_tax"] == Decimal("9.000")
+    assert split["core_owner_wages"] == Decimal("10.00")
+    assert split["occupier_wages"] == Decimal("90.00")
 
 
 def test_resolve_hour_range_treats_to_as_exact_exclusive_boundary() -> None:

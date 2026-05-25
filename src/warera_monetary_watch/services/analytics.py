@@ -79,14 +79,14 @@ def calculate_core_owner_share_ratio(
     if not is_occupied:
         return Decimal("0")
     if resistance is None or resistance_max is None or resistance_max <= 0:
-        return Decimal("1")
+        return Decimal("0")
 
     normalized = resistance / resistance_max
     if normalized < 0:
         normalized = Decimal("0")
     elif normalized > 1:
         normalized = Decimal("1")
-    return Decimal("1") - (normalized * Decimal("0.6"))
+    return normalized * Decimal("0.4")
 
 
 def calculate_occupier_share_ratio(
@@ -98,14 +98,14 @@ def calculate_occupier_share_ratio(
     if not is_occupied:
         return Decimal("1")
     if resistance is None or resistance_max is None or resistance_max <= 0:
-        return Decimal("0")
+        return Decimal("1")
 
     normalized = resistance / resistance_max
     if normalized < 0:
         normalized = Decimal("0")
     elif normalized > 1:
         normalized = Decimal("1")
-    return normalized * Decimal("0.6")
+    return Decimal("1") - (normalized * Decimal("0.4"))
 
 
 def split_tax_for_region_control(
@@ -268,7 +268,6 @@ async def get_overview(
         total_tax += tax_income
         total_wages += wages_paid
         effective_rate = (tax_income / wages_paid) if wages_paid else Decimal("0")
-        statutory_rate = effective_rate * (Decimal("100") + country.income_tax) / Decimal("100") if country.income_tax else effective_rate
         leaderboard.append(
             {
                 "country_id": country.id,
@@ -278,7 +277,7 @@ async def get_overview(
                 "tax_income": decimal_to_float(tax_income),
                 "wages_paid": decimal_to_float(wages_paid),
                 "transactions": int(row.transactions or 0),
-                "avg_tax_rate": decimal_to_float(statutory_rate * Decimal("100")) if wages_paid else 0.0,
+                "avg_tax_rate": decimal_to_float(effective_rate * Decimal("100")) if wages_paid else 0.0,
             }
         )
 
@@ -383,26 +382,55 @@ async def get_game_weekly_income_taxes(
         (WageEventRaw.region_resistance > WageEventRaw.region_resistance_max, Decimal("1")),
         else_=WageEventRaw.region_resistance / WageEventRaw.region_resistance_max,
     )
-    occupier_share = resistance_ratio * Decimal("0.6")
-    recipient_tax = case(
+    core_owner_share = resistance_ratio * Decimal("0.4")
+    occupier_share = Decimal("1") - core_owner_share
+    operating_tax = case(
         (WageEventRaw.is_core_region.is_(True), WageEventRaw.income_tax_money),
         else_=WageEventRaw.income_tax_money * occupier_share,
+    )
+    original_country_tax = WageEventRaw.income_tax_money * core_owner_share
+    operating_entries = (
+        select(
+            WageEventRaw.operating_country_id.label("recipient_country_id"),
+            operating_tax.label("tax_income"),
+            WageEventRaw.transaction_id.label("transaction_id"),
+        ).where(
+            WageEventRaw.created_at >= start,
+            WageEventRaw.created_at < end,
+            WageEventRaw.resolved.is_(True),
+            WageEventRaw.income_tax_money.is_not(None),
+            WageEventRaw.operating_country_id.is_not(None),
+        )
+    )
+    original_country_entries = (
+        select(
+            WageEventRaw.region_initial_country_id.label("recipient_country_id"),
+            original_country_tax.label("tax_income"),
+            WageEventRaw.transaction_id.label("transaction_id"),
+        ).where(
+            WageEventRaw.created_at >= start,
+            WageEventRaw.created_at < end,
+            WageEventRaw.resolved.is_(True),
+            WageEventRaw.income_tax_money.is_not(None),
+            WageEventRaw.region_initial_country_id.is_not(None),
+            WageEventRaw.operating_country_id != WageEventRaw.region_initial_country_id,
+            WageEventRaw.is_core_region.is_(False),
+            WageEventRaw.region_resistance.is_not(None),
+            WageEventRaw.region_resistance > 0,
+        )
+    )
+    attributed_entries = operating_entries.union_all(original_country_entries).subquery(
+        "game_week_income_entries"
     )
     stmt = (
         select(
             CountryCache.id,
             CountryCache.code,
             CountryCache.name,
-            func.sum(recipient_tax),
-            func.count(WageEventRaw.transaction_id),
+            func.sum(attributed_entries.c.tax_income),
+            func.count(attributed_entries.c.transaction_id),
         )
-        .join(WageEventRaw, WageEventRaw.operating_country_id == CountryCache.id)
-        .where(
-            WageEventRaw.created_at >= start,
-            WageEventRaw.created_at < end,
-            WageEventRaw.resolved.is_(True),
-            WageEventRaw.income_tax_money.is_not(None),
-        )
+        .join(attributed_entries, attributed_entries.c.recipient_country_id == CountryCache.id)
         .group_by(CountryCache.id, CountryCache.code, CountryCache.name)
         .order_by(CountryCache.code.asc())
     )
@@ -510,10 +538,7 @@ async def get_country_summary(
     )
     tax_income = _sum_reference_entries(filtered_entries, "taxes")
     wages_paid = _sum_reference_entries(filtered_entries, "wages")
-    # Convert effective rate to statutory rate: statutory = effective * (100 + statutory) / 100
-    # This accounts for wages being gross amounts
     effective_rate = (tax_income / wages_paid) if wages_paid else Decimal("0")
-    statutory_rate = effective_rate * (Decimal("100") + country.income_tax) / Decimal("100") if country.income_tax else effective_rate * Decimal("100")
     return {
         "country_id": country.id,
         "country_code": country.code,
@@ -539,7 +564,7 @@ async def get_country_summary(
                     "taxes",
                 )
             ),
-            "avg_tax_rate": decimal_to_float(statutory_rate * Decimal("100")) if wages_paid else 0.0,
+            "avg_tax_rate": decimal_to_float(effective_rate * Decimal("100")) if wages_paid else 0.0,
         },
     }
 
@@ -628,13 +653,12 @@ async def get_country_item_breakdown(
         tax_income = _sum_reference_entries(item_entries, "taxes")
         wages_paid = _sum_reference_entries(item_entries, "wages")
         effective_rate = _average_reference_tax_rate(item_entries)
-        statutory_rate = effective_rate * (Decimal("100") + country.income_tax) / Decimal("100") if country.income_tax else effective_rate
         entries.append(
             {
                 "item_code": item,
                 "tax_income": decimal_to_float(tax_income),
                 "wages_paid": decimal_to_float(wages_paid),
-                "avg_tax_rate": decimal_to_float(statutory_rate),
+                "avg_tax_rate": decimal_to_float(effective_rate),
                 "companies": _sum_reference_companies(item_entries),
                 "transactions": local_counts.get(item, 0),
                 "share": decimal_to_float((tax_income / total_tax) * Decimal("100")) if total_tax else 0.0,
@@ -683,7 +707,6 @@ async def get_country_owner_breakdown(
         tax_income = _sum_reference_entries(owner_entries, "taxes")
         wages_paid = _sum_reference_entries(owner_entries, "wages")
         effective_rate = _average_reference_tax_rate(owner_entries)
-        statutory_rate = effective_rate * (Decimal("100") + country.income_tax) / Decimal("100") if country.income_tax else effective_rate
         entries.append(
             {
                 "owner_country_id": owner_country_id,
@@ -691,7 +714,7 @@ async def get_country_owner_breakdown(
                 "owner_country_name": owner_country.name if owner_country else "Unknown",
                 "tax_income": decimal_to_float(tax_income),
                 "wages_paid": decimal_to_float(wages_paid),
-                "avg_tax_rate": decimal_to_float(statutory_rate),
+                "avg_tax_rate": decimal_to_float(effective_rate),
                 "companies": _sum_reference_companies(owner_entries),
                 "transactions": local_counts.get(owner_country_id, 0),
                 "share": decimal_to_float((tax_income / total_tax) * Decimal("100")) if total_tax else 0.0,

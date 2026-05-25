@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from sqlalchemy import delete, false, func, insert, select
+from sqlalchemy import case, delete, false, func, insert, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from warera_monetary_watch.config import Settings, get_settings
@@ -129,8 +129,7 @@ def quantize_money(value: Decimal) -> Decimal:
 def compute_income_tax_money(wage_money: Decimal, tax_rate: Decimal) -> Decimal:
     if tax_rate <= 0:
         return Decimal("0.000000")
-    # Wage transactions are gross amounts; the tax is the included component.
-    return quantize_money((wage_money * tax_rate) / (Decimal("100") + tax_rate))
+    return quantize_money((wage_money * tax_rate) / Decimal("100"))
 
 
 def normalize_lookup_id(value: Any) -> str | None:
@@ -914,24 +913,70 @@ class WageCollectorService:
                 WageEventRaw.resolved.is_(True),
                 WageEventRaw.event_hour.in_(hour_batch),
                 WageEventRaw.operating_country_id.is_not(None),
+                WageEventRaw.region_initial_country_id.is_not(None),
                 WageEventRaw.owner_country_id.is_not(None),
                 WageEventRaw.item_code.is_not(None),
                 WageEventRaw.income_tax_money.is_not(None),
             )
-            attributed_events = (
+            is_core_region = func.coalesce(WageEventRaw.is_core_region, false())
+            resistance_ratio = case(
+                (
+                    (WageEventRaw.region_resistance.is_(None))
+                    | (WageEventRaw.region_resistance_max.is_(None))
+                    | (WageEventRaw.region_resistance_max <= 0),
+                    Decimal("0"),
+                ),
+                (WageEventRaw.region_resistance < 0, Decimal("0")),
+                (WageEventRaw.region_resistance > WageEventRaw.region_resistance_max, Decimal("1")),
+                else_=WageEventRaw.region_resistance / WageEventRaw.region_resistance_max,
+            )
+            core_owner_share = resistance_ratio * Decimal("0.4")
+            occupier_share = Decimal("1") - core_owner_share
+
+            operating_entries = (
                 select(
                     WageEventRaw.event_hour.label("hour_start"),
                     WageEventRaw.operating_country_id.label("recipient_country_id"),
                     WageEventRaw.item_code.label("item_code"),
                     WageEventRaw.owner_country_id.label("owner_country_id"),
-                    func.coalesce(WageEventRaw.is_core_region, false()).label("is_core_region"),
-                    WageEventRaw.income_tax_money.label("tax_income"),
-                    WageEventRaw.money.label("wage_money"),
+                    is_core_region.label("is_core_region"),
+                    case(
+                        (is_core_region.is_(False), WageEventRaw.income_tax_money * occupier_share),
+                        else_=WageEventRaw.income_tax_money,
+                    ).label("tax_income"),
+                    case(
+                        (is_core_region.is_(False), WageEventRaw.money * occupier_share),
+                        else_=WageEventRaw.money,
+                    ).label("wage_money"),
                     WageEventRaw.transaction_id.label("transaction_id"),
                     WageEventRaw.seller_company_id.label("seller_company_id"),
                     WageEventRaw.seller_user_id.label("seller_user_id"),
                 )
                 .where(*base_filters)
+            )
+            original_country_entries = (
+                select(
+                    WageEventRaw.event_hour.label("hour_start"),
+                    WageEventRaw.region_initial_country_id.label("recipient_country_id"),
+                    WageEventRaw.item_code.label("item_code"),
+                    WageEventRaw.owner_country_id.label("owner_country_id"),
+                    literal(True).label("is_core_region"),
+                    (WageEventRaw.income_tax_money * core_owner_share).label("tax_income"),
+                    (WageEventRaw.money * core_owner_share).label("wage_money"),
+                    WageEventRaw.transaction_id.label("transaction_id"),
+                    WageEventRaw.seller_company_id.label("seller_company_id"),
+                    WageEventRaw.seller_user_id.label("seller_user_id"),
+                )
+                .where(
+                    *base_filters,
+                    is_core_region.is_(False),
+                    WageEventRaw.region_initial_country_id != WageEventRaw.operating_country_id,
+                    WageEventRaw.region_resistance.is_not(None),
+                    WageEventRaw.region_resistance > 0,
+                )
+            )
+            attributed_events = (
+                union_all(operating_entries, original_country_entries)
                 .subquery("attributed_wage_events")
             )
             await session.execute(

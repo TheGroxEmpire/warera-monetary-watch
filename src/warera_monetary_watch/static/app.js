@@ -249,10 +249,7 @@ function averageEntryTaxRate(entries, countryIncomeTaxRate) {
   const totalTax = sumEntries(entries, "tax_income");
   const totalWages = sumEntries(entries, "wages_paid");
   const effectiveRate = totalWages ? (totalTax / totalWages) : 0;
-  // Convert effective rate to statutory rate: statutory = effective * (100 + statutory) / 100
-  // This accounts for wages being gross amounts
-  const statutoryRate = countryIncomeTaxRate ? effectiveRate * (100 + countryIncomeTaxRate) / 100 : effectiveRate;
-  return statutoryRate * 100;
+  return effectiveRate * 100;
 }
 
 function groupEntries(entries, key) {
@@ -273,9 +270,7 @@ function buildSummaryFromDataset(payload) {
   const coreEntries = entries.filter((entry) => entry.is_core_region);
   const nonCoreEntries = entries.filter((entry) => !entry.is_core_region);
 
-  // Convert effective rate to statutory rate
   const effectiveRate = wagesPaid ? (taxIncome / wagesPaid) : 0;
-  const statutoryRate = payload.country_income_tax_rate ? effectiveRate * (100 + payload.country_income_tax_rate) / 100 : effectiveRate;
 
   return {
     country_id: payload.country_id,
@@ -292,7 +287,7 @@ function buildSummaryFromDataset(payload) {
       items: new Set(entries.map((entry) => entry.item_code).filter(Boolean)).size,
       core_tax_income: sumEntries(coreEntries, "tax_income"),
       non_core_tax_income: sumEntries(nonCoreEntries, "tax_income"),
-      avg_tax_rate: wagesPaid ? statutoryRate * 100 : 0,
+      avg_tax_rate: wagesPaid ? effectiveRate * 100 : 0,
     },
   };
 }
