@@ -487,16 +487,26 @@ class WageCollectorService:
                             cursor_date = parse_api_datetime(cursor_date_str)
                             cursor_age = datetime.now(tz=UTC) - cursor_date
                             if cursor_age > timedelta(hours=24):
-                                # Cursor is too old - reset to 7 days ago to retrace all missing data
-                                fallback_time = datetime.now(tz=UTC) - timedelta(days=7)
+                                # Cursor is too old - retrace from the earliest transaction in database
+                                # to ensure complete accuracy from API's beginning
+                                result = await session.execute(
+                                    select(func.min(WageEventRaw.created_at))
+                                )
+                                earliest_date = result.scalar()
+                                # Use database minimum, or fallback to far past if DB empty
+                                if earliest_date:
+                                    fallback_time = earliest_date - timedelta(days=1)
+                                else:
+                                    fallback_time = datetime(2026, 4, 20, tzinfo=UTC)
                                 fallback_marker = {
                                     "transaction_id": "0",
                                     "created_at": fallback_time.isoformat(),
                                 }
                                 logger.warning(
-                                    "Cursor is %s old and pages exhausted; resetting to %s to retrace all missing data",
+                                    "Cursor is %s old and pages exhausted; resetting to %s (earliest known: %s) to retrace all missing data",
                                     cursor_age,
                                     fallback_time,
+                                    earliest_date,
                                 )
                                 await self._set_state_json(session, CURSOR_STATE_KEY, fallback_marker)
                             else:
