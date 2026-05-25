@@ -525,11 +525,12 @@ class WageCollectorService:
                             cursor_marker,
                         )
 
-                unresolved_hours = await self._resolve_unresolved_events(
+                unresolved_hours = await self._resolve_unresolved_events_parallel(
                     session,
                     client,
                     countries_by_id,
                     regions_by_id,
+                    num_workers=3,
                 )
                 if unresolved_hours:
                     affected_hours.update(unresolved_hours)
@@ -951,6 +952,172 @@ class WageCollectorService:
                 affected_hours.add(event.event_hour)
             else:
                 model.raw_payload = event.raw_payload
+        return affected_hours
+
+    async def _resolve_unresolved_batch_worker(
+        self,
+        client: WareraClient,
+        countries_by_id: dict[str, CountryMeta],
+        regions_by_id: dict[str, RegionMeta],
+        offset: int,
+        limit: int,
+    ) -> set[datetime]:
+        """Process a single batch of unresolved events in parallel."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(WageEventRaw)
+                .where(WageEventRaw.resolved.is_(False))
+                .order_by(WageEventRaw.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            unresolved_models = list(result.scalars())
+            if not unresolved_models:
+                return set()
+
+            transactions = [dict(model.raw_payload) for model in unresolved_models]
+            seller_ids = sorted(
+                {
+                    seller_id
+                    for model in unresolved_models
+                    if (seller_id := normalize_lookup_id(model.seller_user_id)) is not None
+                }
+            )
+            buyer_ids = sorted(
+                {
+                    buyer_id
+                    for model in unresolved_models
+                    if (buyer_id := normalize_lookup_id(model.buyer_user_id)) is not None
+                }
+            )
+
+            users = await self._load_users_with_cache(session, client, sorted({*seller_ids, *buyer_ids}))
+            seller_users = {user_id: users[user_id] for user_id in seller_ids if user_id in users}
+            buyer_users = {user_id: users[user_id] for user_id in buyer_ids if user_id in users}
+            await self._upsert_users(session, users)
+
+            workers_by_employer_user_id = await client.get_workers_by_employer_user_ids(buyer_ids)
+            company_ids = {
+                company_id
+                for item in transactions
+                if (seller_id := normalize_lookup_id(item.get("sellerId"))) is not None
+                and (buyer_id := normalize_lookup_id(item.get("buyerId"))) is not None
+                and (
+                    company_id := find_company_id_for_wage(
+                        seller_user_id=seller_id,
+                        buyer_user_id=buyer_id,
+                        created_at=parse_api_datetime(str(item["createdAt"])),
+                        wage_money=quantize_money(decimal_from_number(item.get("money"))),
+                        quantity=quantize_money(decimal_from_number(item.get("quantity"))),
+                        employer_workers=workers_by_employer_user_id.get(buyer_id),
+                    )
+                )
+                is not None
+            }
+            companies = await self._load_companies_with_cache(session, client, sorted(company_ids))
+            await self._upsert_companies(session, companies)
+
+            enriched = enrich_wage_transactions(
+                transactions,
+                seller_users=seller_users,
+                buyer_users=buyer_users,
+                workers_by_employer_user_id=workers_by_employer_user_id,
+                companies=companies,
+                countries_by_id=countries_by_id,
+                regions_by_id=regions_by_id,
+            )
+            affected_hours: set[datetime] = set()
+            models_by_id = {model.transaction_id: model for model in unresolved_models}
+            for event in enriched:
+                model = models_by_id.get(event.transaction_id)
+                if model is None:
+                    continue
+                model.seller_company_id = event.seller_company_id
+                model.operating_region_id = event.operating_region_id
+                model.operating_country_id = event.operating_country_id
+                model.region_initial_country_id = event.region_initial_country_id
+                model.owner_country_id = event.owner_country_id
+                model.item_code = event.item_code
+                model.is_core_region = event.is_core_region
+                model.region_resistance = event.region_resistance
+                model.region_resistance_max = event.region_resistance_max
+                model.income_tax_rate = event.income_tax_rate
+                model.income_tax_money = event.income_tax_money
+                model.resolved = event.resolved
+                model.unresolved_reason = event.unresolved_reason
+                model.resolved_at = datetime.now(tz=UTC) if event.resolved else None
+                if event.resolved:
+                    model.raw_payload = {}
+                    affected_hours.add(event.event_hour)
+                else:
+                    model.raw_payload = event.raw_payload
+            await session.commit()
+            return affected_hours
+
+    async def _resolve_unresolved_events_parallel(
+        self,
+        session: AsyncSession,
+        client: WareraClient,
+        countries_by_id: dict[str, CountryMeta],
+        regions_by_id: dict[str, RegionMeta],
+        num_workers: int = 3,
+    ) -> set[datetime]:
+        """Resolve unresolved events using parallel workers."""
+        # Get total count of unresolved events
+        result = await session.execute(
+            select(func.count(WageEventRaw.id))
+            .where(WageEventRaw.resolved.is_(False))
+        )
+        total_unresolved = result.scalar() or 0
+
+        if total_unresolved == 0:
+            return set()
+
+        # Calculate batch size per worker
+        batch_size = max(250, (total_unresolved // num_workers) + 1)
+
+        # Create worker tasks
+        tasks = []
+        for worker_id in range(num_workers):
+            offset = worker_id * batch_size
+            if offset >= total_unresolved:
+                break
+            task = self._resolve_unresolved_batch_worker(
+                client,
+                countries_by_id,
+                regions_by_id,
+                offset,
+                batch_size,
+            )
+            tasks.append(task)
+
+        logger.info(
+            "Starting parallel resolution of %d unresolved events with %d workers (batch_size=%d)",
+            total_unresolved,
+            len(tasks),
+            batch_size,
+        )
+
+        # Run all workers concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Aggregate results
+        affected_hours: set[datetime] = set()
+        for worker_id, result in enumerate(results):
+            if isinstance(result, set):
+                affected_hours.update(result)
+                logger.info(
+                    "Worker %d resolved %d affected hours",
+                    worker_id,
+                    len(result),
+                )
+            elif isinstance(result, Exception):
+                logger.exception("Worker %d failed: %s", worker_id, result)
+
+        logger.info(
+            "Parallel resolution complete: %d total affected hours",
+            len(affected_hours),
+        )
         return affected_hours
 
     async def _rebuild_rollups(self, session: AsyncSession, hours: set[datetime]) -> None:
