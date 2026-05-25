@@ -470,10 +470,36 @@ class WageCollectorService:
                 if ingest_stats["reached_cursor"] and ingest_stats["newest_marker"] is not None:
                     await self._set_state_json(session, CURSOR_STATE_KEY, ingest_stats["newest_marker"])
                 elif ingest_stats["exhausted_pages"]:
-                    logger.warning(
-                        "Collector hit max pages before reaching previous cursor; keeping cursor at %s",
-                        cursor_marker,
-                    )
+                    # Safeguard: if cursor is older than 24 hours and we've exhausted pages,
+                    # force-advance to prevent cursor from getting stuck on deleted/expired API data
+                    cursor_date_str = cursor_marker.get("created_at")
+                    if cursor_date_str and ingest_stats["newest_marker"] is not None:
+                        try:
+                            cursor_date = parse_api_datetime(cursor_date_str)
+                            cursor_age = datetime.now(tz=UTC) - cursor_date
+                            if cursor_age > timedelta(hours=24):
+                                logger.warning(
+                                    "Cursor is %s old and pages exhausted; force-advancing from %s to %s to prevent staleness",
+                                    cursor_age,
+                                    cursor_date,
+                                    ingest_stats["newest_marker"].get("created_at"),
+                                )
+                                await self._set_state_json(session, CURSOR_STATE_KEY, ingest_stats["newest_marker"])
+                            else:
+                                logger.warning(
+                                    "Collector hit max pages before reaching previous cursor; keeping cursor at %s",
+                                    cursor_marker,
+                                )
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                "Collector hit max pages before reaching previous cursor; keeping cursor at %s",
+                                cursor_marker,
+                            )
+                    else:
+                        logger.warning(
+                            "Collector hit max pages before reaching previous cursor; keeping cursor at %s",
+                            cursor_marker,
+                        )
 
                 unresolved_hours = await self._resolve_unresolved_events(
                     session,
