@@ -11,7 +11,6 @@ let countryDataset = null;
 const els = {
   coverageLabel: document.getElementById("coverage-label"),
   dataCoverageLabel: document.getElementById("data-coverage-label"),
-  collectorStatusLabel: document.getElementById("collector-status-label"),
   fetchNotice: document.getElementById("fetch-notice"),
   fetchButton: document.getElementById("fetch-tax-button"),
   overviewPanel: document.getElementById("overview-panel"),
@@ -114,7 +113,7 @@ function formatUtcLabel(date) {
   return isoHourUtc(date).replace("T", " ");
 }
 
-function applyDataBounds(filters, status) {
+function applyDataBounds(filters) {
   const fromDate = parseDate(filters?.data_bounds?.from);
   const toDate = parseDate(filters?.data_bounds?.to);
   const minFrom = fromDate ? ceilHourUtc(fromDate) : null;
@@ -137,12 +136,6 @@ function applyDataBounds(filters, status) {
     els.dataCoverageLabel.textContent = "No complete hourly range yet.";
   }
 
-  const cursorDate = parseDate(status?.cursor?.created_at);
-  if (cursorDate) {
-    els.collectorStatusLabel.textContent = `Latest collected event: ${cursorDate.toISOString().slice(0, 19).replace("T", " ")} UTC`;
-  } else {
-    els.collectorStatusLabel.textContent = "Collector has not recorded a cursor yet.";
-  }
 }
 
 function clampInputsToDataBounds() {
@@ -653,11 +646,8 @@ function initializeFilters() {
 }
 
 async function bootstrap() {
-  const [filters, status] = await Promise.all([
-    fetchJson("/api/v1/filters"),
-    fetchJson("/api/v1/status"),
-  ]);
-  applyDataBounds(filters, status);
+  const filters = await fetchJson("/api/v1/filters");
+  applyDataBounds(filters);
   initializeFilters();
   populateCountries(filters.countries ?? []);
   populateItems(filters.items ?? []);
@@ -759,7 +749,6 @@ els.form.addEventListener("submit", async (event) => {
 bootstrap().catch((error) => {
   console.error(error);
   els.dataCoverageLabel.textContent = "Could not load collected range.";
-  els.collectorStatusLabel.textContent = "";
   if (els.fetchNotice) {
     els.fetchNotice.textContent = `Could not load Monetary Watch: ${error.message}`;
   }

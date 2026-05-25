@@ -38,6 +38,10 @@ WarEra Monetary Watch collects wage transactions from the WarEra API, stores
 them in PostgreSQL, and serves a FastAPI dashboard for country tax-income
 analysis.
 
+Live site: [https://warera.xorgress.com/monetary-watch](https://warera.xorgress.com/monetary-watch)
+
+Support: [Buy Me a Coffee](https://buymeacoffee.com/groxempire)
+
 ## Features
 
 - Live wage-event collector with configurable API rate limits
@@ -84,6 +88,7 @@ Key settings live in `.env`:
 
 - `WARERA_API_TOKEN`: required for the collector
 - `WARERA_API_BASE_URL`: WarEra API endpoint
+- `DATABASE_URL`: async SQLAlchemy URL; the Compose default uses `monetary-watch-postgres` to avoid name collisions on shared Docker networks
 - `APP_BASE_PATH`: dashboard base path, default `/monetary-watch`
 - `WEB_PORT`: port used inside the web container
 - `WEB_PUBLISHED_PORT`: host port exposed by Docker Compose

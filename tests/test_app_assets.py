@@ -113,8 +113,9 @@ def test_frontend_fetches_aggregate_tax_endpoints() -> None:
     assert 'fetchJson("/api/v1/overview", selectedAggregateParams())' in app_js
     assert "fetchJson(`/api/v1/countries/${countryCode}/dataset`, params)" in app_js
     assert '<option value="${escapeHtml(country.id)}">${escapeHtml(country.name)}</option>' in app_js
-    assert 'fetchJson("/api/v1/status")' in app_js
-    assert "applyDataBounds(filters, status)" in app_js
+    assert 'fetchJson("/api/v1/status")' not in app_js
+    assert "applyDataBounds(filters)" in app_js
+    assert "Latest collected event" not in app_js
     assert "startOfWeekMondayUtc(maxTo)" in app_js
     assert "dataWindow.maxTo ?? ceilHourUtc(new Date())" in app_js
     assert "const maxTo = toDate ? ceilHourUtc(toDate) : null;" in app_js

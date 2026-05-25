@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.2.2
         env:
           GH_REF_NAME: ${{ github.ref_name }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -39,7 +39,7 @@ jobs:
           envs: GH_REF_NAME,GH_REPOSITORY,GH_SHA,GH_TOKEN,GH_RUN_URL,DEPLOY_ENABLE_TRAEFIK
           script_stop: true
           script: |
-            set -e
+            set -Eeuo pipefail
             echo "Starting deployment..."
             cd "${{ secrets.DEPLOY_PATH }}"
 
@@ -50,6 +50,14 @@ jobs:
             git fetch --depth=1 "${REPO_URL}" "${BRANCH}"
             git checkout -B "${BRANCH}" FETCH_HEAD
             git reset --hard FETCH_HEAD
+
+            if ! grep -q 'alembic.*upgrade.*head' docker-compose.yml; then
+              echo "Error: expected WarEra Monetary Watch deploy checkout with Alembic migrations."
+              echo "DEPLOY_PATH may point at the wrong application directory."
+              exit 1
+            fi
+
+            unset DATABASE_URL DB_URL GOOSE_DRIVER GOOSE_DBSTRING GOOSE_MIGRATION_DIR
 
             echo "Deployment at $(date) branch=${BRANCH} commit=${GH_SHA} run=${GH_RUN_URL}" >> deploy.log
 
