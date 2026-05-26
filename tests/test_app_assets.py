@@ -51,6 +51,7 @@ def test_home_page_shows_global_leaderboard() -> None:
     assert response.status_code == 200
     assert "showGlobalLeaderboard: true" in response.text
     assert "Global Tax Leaderboard" in response.text
+    assert 'href="https://buymeacoffee.com/groxempire"' in response.text
     assert 'href="https://github.com/TheGroxEmpire/warera-monetary-watch/issues"' in response.text
     assert "Report Issues" in response.text
     assert 'rel="noopener noreferrer"' in response.text
