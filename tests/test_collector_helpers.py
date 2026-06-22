@@ -125,6 +125,7 @@ def make_wage_event(
         money=Decimal("100"),
         quantity=Decimal("1"),
         seller_user_id="seller-1",
+        worker_country_id="country-operating",
         buyer_user_id="buyer-1",
         seller_company_id="company-1",
         operating_region_id="region-1",
@@ -153,6 +154,7 @@ def make_hourly_rollup(
         item_code="iron",
         owner_country_id="country-owner",
         is_core_region=True,
+        is_foreign_worker=False,
         tax_income_sum=Decimal("10"),
         wage_money_sum=Decimal("100"),
         transaction_count=1,
@@ -207,14 +209,14 @@ async def test_retention_deletes_old_raw_events_and_hourly_rollups() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rebuild_rollups_splits_non_core_tax_between_occupier_and_original_country() -> None:
+async def test_rebuild_rollups_splits_foreign_citizen_tax_between_work_and_citizenship_countries() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        event_hour = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+        event_hour = datetime(2026, 6, 13, 17, 0, tzinfo=UTC)
         session.add(
             WageEventRaw(
                 transaction_id="tx-noncore-1",
@@ -223,10 +225,78 @@ async def test_rebuild_rollups_splits_non_core_tax_between_occupier_and_original
                 money=Decimal("100"),
                 quantity=Decimal("1"),
                 seller_user_id="seller-1",
+                worker_country_id="country-citizen",
                 buyer_user_id="buyer-1",
                 seller_company_id="company-1",
                 operating_region_id="region-occupied",
-                operating_country_id="country-occupier",
+                operating_country_id="country-work",
+                region_initial_country_id="country-core-owner",
+                owner_country_id="country-owner",
+                item_code="iron",
+                is_core_region=False,
+                region_resistance=Decimal("100"),
+                region_resistance_max=Decimal("100"),
+                income_tax_rate=Decimal("10"),
+                income_tax_money=Decimal("10"),
+                resolved=True,
+                unresolved_reason=None,
+                raw_payload={},
+            )
+        )
+        await session.commit()
+
+        service = WageCollectorService(
+            session_factory=session_factory,
+            settings=make_settings(max_pages=1),
+        )
+        await service._rebuild_rollups(session, {event_hour})
+        await session.commit()
+
+        rows = list(
+            (
+                await session.execute(
+                    select(HourlyTaxRollup).order_by(HourlyTaxRollup.operating_country_id)
+                )
+            ).scalars()
+        )
+
+    await engine.dispose()
+
+    assert len(rows) == 2
+    assert rows[0].operating_country_id == "country-citizen"
+    assert rows[0].is_core_region is False
+    assert rows[0].is_foreign_worker is True
+    assert rows[0].tax_income_sum == Decimal("3.000000")
+    assert rows[0].wage_money_sum == Decimal("30.000000")
+    assert rows[1].operating_country_id == "country-work"
+    assert rows[1].is_core_region is False
+    assert rows[1].is_foreign_worker is True
+    assert rows[1].tax_income_sum == Decimal("7.000000")
+    assert rows[1].wage_money_sum == Decimal("70.000000")
+
+
+@pytest.mark.asyncio
+async def test_rebuild_rollups_keeps_resistance_split_before_foreign_tax_cutover() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        event_hour = datetime(2026, 6, 13, 16, 0, tzinfo=UTC)
+        session.add(
+            WageEventRaw(
+                transaction_id="tx-old-rule-1",
+                created_at=datetime(2026, 6, 13, 16, 30, tzinfo=UTC),
+                event_hour=event_hour,
+                money=Decimal("100"),
+                quantity=Decimal("1"),
+                seller_user_id="seller-1",
+                worker_country_id="country-citizen",
+                buyer_user_id="buyer-1",
+                seller_company_id="company-1",
+                operating_region_id="region-occupied",
+                operating_country_id="country-work",
                 region_initial_country_id="country-core-owner",
                 owner_country_id="country-owner",
                 item_code="iron",
@@ -262,10 +332,12 @@ async def test_rebuild_rollups_splits_non_core_tax_between_occupier_and_original
     assert len(rows) == 2
     assert rows[0].operating_country_id == "country-core-owner"
     assert rows[0].is_core_region is True
+    assert rows[0].is_foreign_worker is False
     assert rows[0].tax_income_sum == Decimal("4.000000")
     assert rows[0].wage_money_sum == Decimal("40.000000")
-    assert rows[1].operating_country_id == "country-occupier"
+    assert rows[1].operating_country_id == "country-work"
     assert rows[1].is_core_region is False
+    assert rows[1].is_foreign_worker is False
     assert rows[1].tax_income_sum == Decimal("6.000000")
     assert rows[1].wage_money_sum == Decimal("60.000000")
 
@@ -367,7 +439,7 @@ def test_enrich_wage_transaction_uses_historical_tax_rate_when_available() -> No
     ]
     enriched = enrich_wage_transactions(
         transactions,
-        seller_users={"seller-1": {}},
+        seller_users={"seller-1": {"country": "country-operating"}},
         buyer_users={"buyer-1": {"country": "country-owner"}},
         workers_by_employer_user_id={
             "buyer-1": {
@@ -424,6 +496,7 @@ async def test_ingest_transactions_preserves_existing_resolved_event_when_reenri
                 money=Decimal("4.110000"),
                 quantity=Decimal("30.000000"),
                 seller_user_id="seller-1",
+                worker_country_id="country-operating",
                 buyer_user_id="buyer-1",
                 seller_company_id="company-1",
                 operating_region_id="region-1",
@@ -594,7 +667,7 @@ def test_enrich_wage_transaction_success() -> None:
             "buyerId": "buyer-1",
         }
     ]
-    seller_users = {"seller-1": {}}
+    seller_users = {"seller-1": {"country": "country-operating"}}
     buyer_users = {"buyer-1": {"country": "country-owner"}}
     workers_by_employer_user_id = {
         "buyer-1": {
@@ -644,6 +717,7 @@ def test_enrich_wage_transaction_success() -> None:
     event = enriched[0]
     assert event.resolved is True
     assert event.seller_company_id == "company-1"
+    assert event.worker_country_id == "country-operating"
     assert event.operating_country_id == "country-operating"
     assert event.region_initial_country_id == "country-operating"
     assert event.owner_country_id == "country-owner"
@@ -666,7 +740,7 @@ def test_enrich_wage_transaction_marks_missing_company_as_unresolved() -> None:
             "buyerId": "buyer-1",
         }
     ]
-    seller_users = {"seller-1": {}}
+    seller_users = {"seller-1": {"country": "country-operating"}}
     buyer_users = {"buyer-1": {"country": "country-owner"}}
     workers_by_employer_user_id = {
         "buyer-1": {
@@ -685,7 +759,9 @@ def test_enrich_wage_transaction_marks_missing_company_as_unresolved() -> None:
         buyer_users=buyer_users,
         workers_by_employer_user_id=workers_by_employer_user_id,
         companies={},
-        countries_by_id={},
+        countries_by_id={
+            "country-operating": CountryMeta("country-operating", "eg", "Egypt", Decimal("10"))
+        },
         regions_by_id={},
     )
 
@@ -775,11 +851,13 @@ def test_enrich_wage_transaction_does_not_use_worker_current_company() -> None:
 
     enriched = enrich_wage_transactions(
         transactions,
-        seller_users={"seller-1": {"company": "wrong-current-company"}},
+        seller_users={"seller-1": {"country": "country-operating", "company": "wrong-current-company"}},
         buyer_users={"buyer-1": {"country": "country-owner"}},
         workers_by_employer_user_id={},
         companies={"wrong-current-company": {"user": "buyer-1", "region": "region-1", "itemCode": "steel"}},
-        countries_by_id={},
+        countries_by_id={
+            "country-operating": CountryMeta("country-operating", "eg", "Egypt", Decimal("10"))
+        },
         regions_by_id={},
     )
 

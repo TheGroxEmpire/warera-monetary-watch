@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from sqlalchemy import case, delete, false, func, insert, literal, select, union_all
+from sqlalchemy import case, delete, false, func, insert, select, true, union_all
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from warera_monetary_watch.config import Settings, get_settings
@@ -21,6 +21,10 @@ from warera_monetary_watch.db.models import (
     WageEventRaw,
 )
 from warera_monetary_watch.integrations.warera.client import WareraApiError, WareraClient
+from warera_monetary_watch.services.tax_rules import (
+    FOREIGN_CITIZEN_TAX_EFFECTIVE_AT,
+    FOREIGN_CITIZEN_TAX_SHARE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,7 @@ class EnrichedWageEvent:
     money: Decimal
     quantity: Decimal
     seller_user_id: str
+    worker_country_id: str | None
     buyer_user_id: str
     seller_company_id: str | None
     operating_region_id: str | None
@@ -290,6 +295,7 @@ def enrich_wage_transactions(
         money = quantize_money(decimal_from_number(transaction.get("money")))
         quantity = quantize_money(decimal_from_number(transaction.get("quantity")))
         seller_user_id = normalize_lookup_id(transaction.get("sellerId")) or ""
+        worker_country_id: str | None = None
         buyer_user_id = normalize_lookup_id(transaction.get("buyerId")) or ""
         raw_payload = dict(transaction)
 
@@ -319,54 +325,60 @@ def enrich_wage_transactions(
         elif buyer_user is None:
             unresolved_reason = "missing_buyer_user"
         else:
-            company_id = find_company_id_for_wage(
-                seller_user_id=seller_user_id,
-                buyer_user_id=buyer_user_id,
-                created_at=created_at,
-                wage_money=money,
-                quantity=quantity,
-                employer_workers=workers_by_employer_user_id.get(buyer_user_id),
-            )
-            if company_id is None:
-                unresolved_reason = "missing_matching_worker_company"
+            worker_country_id = normalize_lookup_id(seller_user.get("country"))
+            if worker_country_id is None:
+                unresolved_reason = "missing_worker_country"
+            elif worker_country_id not in countries_by_id:
+                unresolved_reason = "unknown_worker_country"
             else:
-                seller_company_id = company_id
-                company = companies.get(company_id)
-                if company is None:
-                    unresolved_reason = "missing_company_detail"
+                company_id = find_company_id_for_wage(
+                    seller_user_id=seller_user_id,
+                    buyer_user_id=buyer_user_id,
+                    created_at=created_at,
+                    wage_money=money,
+                    quantity=quantity,
+                    employer_workers=workers_by_employer_user_id.get(buyer_user_id),
+                )
+                if company_id is None:
+                    unresolved_reason = "missing_matching_worker_company"
                 else:
-                    region_id = normalize_lookup_id(company.get("region"))
-                    buyer_country_id = normalize_lookup_id(buyer_user.get("country"))
-                    if region_id is None:
-                        unresolved_reason = "missing_region"
-                    elif buyer_country_id is None:
-                        unresolved_reason = "missing_owner_country"
+                    seller_company_id = company_id
+                    company = companies.get(company_id)
+                    if company is None:
+                        unresolved_reason = "missing_company_detail"
                     else:
-                        region = regions_by_id.get(region_id)
-                        owner_country = countries_by_id.get(buyer_country_id)
-                        if region is None:
-                            unresolved_reason = "unknown_region"
-                        elif owner_country is None:
-                            unresolved_reason = "unknown_owner_country"
+                        region_id = normalize_lookup_id(company.get("region"))
+                        buyer_country_id = normalize_lookup_id(buyer_user.get("country"))
+                        if region_id is None:
+                            unresolved_reason = "missing_region"
+                        elif buyer_country_id is None:
+                            unresolved_reason = "missing_owner_country"
                         else:
-                            country = countries_by_id.get(region.country_id)
-                            if country is None:
-                                unresolved_reason = "unknown_operating_country"
+                            region = regions_by_id.get(region_id)
+                            owner_country = countries_by_id.get(buyer_country_id)
+                            if region is None:
+                                unresolved_reason = "unknown_region"
+                            elif owner_country is None:
+                                unresolved_reason = "unknown_owner_country"
                             else:
-                                operating_region_id = region.id
-                                operating_country_id = region.country_id
-                                region_initial_country_id = region.initial_country_id
-                                owner_country_id = owner_country.id
-                                item_code_value = company.get("itemCode")
-                                item_code = str(item_code_value) if item_code_value else None
-                                is_core_region = region.country_id == region.initial_country_id
-                                region_resistance = region.resistance
-                                region_resistance_max = region.resistance_max
-                                income_tax_rate = decimal_from_number(
-                                    transaction.get("incomeTaxRate", country.income_tax)
-                                )
-                                income_tax_money = compute_income_tax_money(money, income_tax_rate)
-                                resolved = True
+                                country = countries_by_id.get(region.country_id)
+                                if country is None:
+                                    unresolved_reason = "unknown_operating_country"
+                                else:
+                                    operating_region_id = region.id
+                                    operating_country_id = region.country_id
+                                    region_initial_country_id = region.initial_country_id
+                                    owner_country_id = owner_country.id
+                                    item_code_value = company.get("itemCode")
+                                    item_code = str(item_code_value) if item_code_value else None
+                                    is_core_region = region.country_id == region.initial_country_id
+                                    region_resistance = region.resistance
+                                    region_resistance_max = region.resistance_max
+                                    income_tax_rate = decimal_from_number(
+                                        transaction.get("incomeTaxRate", country.income_tax)
+                                    )
+                                    income_tax_money = compute_income_tax_money(money, income_tax_rate)
+                                    resolved = True
 
         enriched.append(
             EnrichedWageEvent(
@@ -376,6 +388,7 @@ def enrich_wage_transactions(
                 money=money,
                 quantity=quantity,
                 seller_user_id=seller_user_id,
+                worker_country_id=worker_country_id,
                 buyer_user_id=buyer_user_id,
                 seller_company_id=seller_company_id,
                 operating_region_id=operating_region_id,
@@ -751,6 +764,7 @@ class WageCollectorService:
                 model.money = event.money
                 model.quantity = event.quantity
                 model.seller_user_id = event.seller_user_id
+                model.worker_country_id = event.worker_country_id
                 model.buyer_user_id = event.buyer_user_id
                 model.seller_company_id = event.seller_company_id
                 model.operating_region_id = event.operating_region_id
@@ -782,6 +796,7 @@ class WageCollectorService:
             model.money = event.money
             model.quantity = event.quantity
             model.seller_user_id = event.seller_user_id
+            model.worker_country_id = event.worker_country_id
             model.buyer_user_id = event.buyer_user_id
             model.seller_company_id = event.seller_company_id
             model.operating_region_id = event.operating_region_id
@@ -882,6 +897,7 @@ class WageCollectorService:
             model = models_by_id.get(event.transaction_id)
             if model is None:
                 continue
+            model.worker_country_id = event.worker_country_id
             model.seller_company_id = event.seller_company_id
             model.operating_region_id = event.operating_region_id
             model.operating_country_id = event.operating_country_id
@@ -913,12 +929,17 @@ class WageCollectorService:
                 WageEventRaw.resolved.is_(True),
                 WageEventRaw.event_hour.in_(hour_batch),
                 WageEventRaw.operating_country_id.is_not(None),
-                WageEventRaw.region_initial_country_id.is_not(None),
                 WageEventRaw.owner_country_id.is_not(None),
                 WageEventRaw.item_code.is_not(None),
                 WageEventRaw.income_tax_money.is_not(None),
             )
             is_core_region = func.coalesce(WageEventRaw.is_core_region, false())
+            new_rule_condition = WageEventRaw.created_at >= FOREIGN_CITIZEN_TAX_EFFECTIVE_AT
+            old_rule_filters = (
+                *base_filters,
+                WageEventRaw.created_at < FOREIGN_CITIZEN_TAX_EFFECTIVE_AT,
+                WageEventRaw.region_initial_country_id.is_not(None),
+            )
             resistance_ratio = case(
                 (
                     (WageEventRaw.region_resistance.is_(None))
@@ -930,53 +951,112 @@ class WageCollectorService:
                 (WageEventRaw.region_resistance > WageEventRaw.region_resistance_max, Decimal("1")),
                 else_=WageEventRaw.region_resistance / WageEventRaw.region_resistance_max,
             )
-            core_owner_share = resistance_ratio * Decimal("0.4")
-            occupier_share = Decimal("1") - core_owner_share
+            old_core_owner_share = resistance_ratio * Decimal("0.4")
+            old_work_country_share = Decimal("1") - old_core_owner_share
+            foreign_worker_condition = (
+                new_rule_condition
+                & WageEventRaw.worker_country_id.is_not(None)
+                & (WageEventRaw.worker_country_id != WageEventRaw.operating_country_id)
+            )
+            is_foreign_worker = case(
+                (
+                    foreign_worker_condition,
+                    true(),
+                ),
+                else_=false(),
+            )
+            new_work_country_share = case(
+                (
+                    foreign_worker_condition,
+                    Decimal("1") - FOREIGN_CITIZEN_TAX_SHARE,
+                ),
+                else_=Decimal("1"),
+            )
 
-            operating_entries = (
+            old_operating_entries = (
                 select(
                     WageEventRaw.event_hour.label("hour_start"),
                     WageEventRaw.operating_country_id.label("recipient_country_id"),
                     WageEventRaw.item_code.label("item_code"),
                     WageEventRaw.owner_country_id.label("owner_country_id"),
                     is_core_region.label("is_core_region"),
+                    false().label("is_foreign_worker"),
                     case(
-                        (is_core_region.is_(False), WageEventRaw.income_tax_money * occupier_share),
+                        (is_core_region.is_(False), WageEventRaw.income_tax_money * old_work_country_share),
                         else_=WageEventRaw.income_tax_money,
                     ).label("tax_income"),
                     case(
-                        (is_core_region.is_(False), WageEventRaw.money * occupier_share),
+                        (is_core_region.is_(False), WageEventRaw.money * old_work_country_share),
                         else_=WageEventRaw.money,
                     ).label("wage_money"),
                     WageEventRaw.transaction_id.label("transaction_id"),
                     WageEventRaw.seller_company_id.label("seller_company_id"),
                     WageEventRaw.seller_user_id.label("seller_user_id"),
                 )
-                .where(*base_filters)
+                .where(*old_rule_filters)
             )
-            original_country_entries = (
+            old_original_country_entries = (
                 select(
                     WageEventRaw.event_hour.label("hour_start"),
                     WageEventRaw.region_initial_country_id.label("recipient_country_id"),
                     WageEventRaw.item_code.label("item_code"),
                     WageEventRaw.owner_country_id.label("owner_country_id"),
-                    literal(True).label("is_core_region"),
-                    (WageEventRaw.income_tax_money * core_owner_share).label("tax_income"),
-                    (WageEventRaw.money * core_owner_share).label("wage_money"),
+                    true().label("is_core_region"),
+                    false().label("is_foreign_worker"),
+                    (WageEventRaw.income_tax_money * old_core_owner_share).label("tax_income"),
+                    (WageEventRaw.money * old_core_owner_share).label("wage_money"),
                     WageEventRaw.transaction_id.label("transaction_id"),
                     WageEventRaw.seller_company_id.label("seller_company_id"),
                     WageEventRaw.seller_user_id.label("seller_user_id"),
                 )
                 .where(
-                    *base_filters,
+                    *old_rule_filters,
                     is_core_region.is_(False),
                     WageEventRaw.region_initial_country_id != WageEventRaw.operating_country_id,
                     WageEventRaw.region_resistance.is_not(None),
                     WageEventRaw.region_resistance > 0,
                 )
             )
+
+            new_operating_entries = (
+                select(
+                    WageEventRaw.event_hour.label("hour_start"),
+                    WageEventRaw.operating_country_id.label("recipient_country_id"),
+                    WageEventRaw.item_code.label("item_code"),
+                    WageEventRaw.owner_country_id.label("owner_country_id"),
+                    is_core_region.label("is_core_region"),
+                    is_foreign_worker.label("is_foreign_worker"),
+                    (WageEventRaw.income_tax_money * new_work_country_share).label("tax_income"),
+                    (WageEventRaw.money * new_work_country_share).label("wage_money"),
+                    WageEventRaw.transaction_id.label("transaction_id"),
+                    WageEventRaw.seller_company_id.label("seller_company_id"),
+                    WageEventRaw.seller_user_id.label("seller_user_id"),
+                )
+                .where(*base_filters, new_rule_condition)
+            )
+            new_citizenship_entries = (
+                select(
+                    WageEventRaw.event_hour.label("hour_start"),
+                    WageEventRaw.worker_country_id.label("recipient_country_id"),
+                    WageEventRaw.item_code.label("item_code"),
+                    WageEventRaw.owner_country_id.label("owner_country_id"),
+                    is_core_region.label("is_core_region"),
+                    true().label("is_foreign_worker"),
+                    (WageEventRaw.income_tax_money * FOREIGN_CITIZEN_TAX_SHARE).label("tax_income"),
+                    (WageEventRaw.money * FOREIGN_CITIZEN_TAX_SHARE).label("wage_money"),
+                    WageEventRaw.transaction_id.label("transaction_id"),
+                    WageEventRaw.seller_company_id.label("seller_company_id"),
+                    WageEventRaw.seller_user_id.label("seller_user_id"),
+                )
+                .where(*base_filters, foreign_worker_condition)
+            )
             attributed_events = (
-                union_all(operating_entries, original_country_entries)
+                union_all(
+                    old_operating_entries,
+                    old_original_country_entries,
+                    new_operating_entries,
+                    new_citizenship_entries,
+                )
                 .subquery("attributed_wage_events")
             )
             await session.execute(
@@ -990,6 +1070,7 @@ class WageCollectorService:
                         "item_code",
                         "owner_country_id",
                         "is_core_region",
+                        "is_foreign_worker",
                         "tax_income_sum",
                         "wage_money_sum",
                         "transaction_count",
@@ -1002,6 +1083,7 @@ class WageCollectorService:
                         attributed_events.c.item_code,
                         attributed_events.c.owner_country_id,
                         attributed_events.c.is_core_region,
+                        attributed_events.c.is_foreign_worker,
                         func.sum(attributed_events.c.tax_income),
                         func.sum(attributed_events.c.wage_money),
                         func.count(attributed_events.c.transaction_id),
@@ -1014,6 +1096,7 @@ class WageCollectorService:
                         attributed_events.c.item_code,
                         attributed_events.c.owner_country_id,
                         attributed_events.c.is_core_region,
+                        attributed_events.c.is_foreign_worker,
                     ),
                 )
             )

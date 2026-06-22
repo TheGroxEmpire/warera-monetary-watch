@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import Select, case, false, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from warera_monetary_watch.db.models import (
@@ -12,6 +12,10 @@ from warera_monetary_watch.db.models import (
     CountryCache,
     HourlyTaxRollup,
     WageEventRaw,
+)
+from warera_monetary_watch.services.tax_rules import (
+    FOREIGN_CITIZEN_TAX_EFFECTIVE_AT,
+    FOREIGN_CITIZEN_TAX_SHARE,
 )
 
 
@@ -70,64 +74,13 @@ def format_game_compact_money(value: Decimal) -> str:
     return f"{scaled:.3f}K"
 
 
-def calculate_core_owner_share_ratio(
-    *,
-    is_occupied: bool,
-    resistance: Decimal | None,
-    resistance_max: Decimal | None,
-) -> Decimal:
-    if not is_occupied:
-        return Decimal("0")
-    if resistance is None or resistance_max is None or resistance_max <= 0:
-        return Decimal("0")
-
-    normalized = resistance / resistance_max
-    if normalized < 0:
-        normalized = Decimal("0")
-    elif normalized > 1:
-        normalized = Decimal("1")
-    return normalized * Decimal("0.4")
-
-
-def calculate_occupier_share_ratio(
-    *,
-    is_occupied: bool,
-    resistance: Decimal | None,
-    resistance_max: Decimal | None,
-) -> Decimal:
-    if not is_occupied:
-        return Decimal("1")
-    if resistance is None or resistance_max is None or resistance_max <= 0:
-        return Decimal("1")
-
-    normalized = resistance / resistance_max
-    if normalized < 0:
-        normalized = Decimal("0")
-    elif normalized > 1:
-        normalized = Decimal("1")
-    return Decimal("1") - (normalized * Decimal("0.4"))
-
-
-def split_tax_for_region_control(
-    *,
-    total_tax: Decimal,
-    total_wages: Decimal,
-    is_occupied: bool,
-    resistance: Decimal | None,
-    resistance_max: Decimal | None,
-) -> dict[str, Decimal]:
-    core_owner_ratio = calculate_core_owner_share_ratio(
-        is_occupied=is_occupied,
-        resistance=resistance,
-        resistance_max=resistance_max,
-    )
-    occupier_ratio = Decimal("1") - core_owner_ratio
-    return {
-        "core_owner_tax": total_tax * core_owner_ratio,
-        "occupier_tax": total_tax * occupier_ratio,
-        "core_owner_wages": total_wages * core_owner_ratio,
-        "occupier_wages": total_wages * occupier_ratio,
-    }
+def normalize_foreign_filter(value: str | None) -> str:
+    normalized = (value or "all").strip().lower()
+    if normalized in {"foreign", "noncore"}:
+        return "foreign"
+    if normalized in {"nonforeign", "non_foreign", "domestic", "core"}:
+        return "nonforeign"
+    return "all"
 
 
 async def get_country_by_code(session: AsyncSession, country_code: str) -> CountryCache | None:
@@ -224,7 +177,7 @@ async def get_overview(
     to_value: str | None,
     item_code: str | None = None,
     owner_country_id: str | None = None,
-    core_filter: str = "all",
+    foreign_filter: str = "all",
 ) -> dict[str, Any]:
     start, end = resolve_hour_range(from_value, to_value)
     attributed_entries = _operating_tax_entries_subquery(start, end)
@@ -244,10 +197,11 @@ async def get_overview(
         stmt = stmt.where(attributed_entries.c.item_code == item_code)
     if owner_country_id:
         stmt = stmt.where(attributed_entries.c.owner_country_id == owner_country_id)
-    if core_filter == "core":
-        stmt = stmt.where(attributed_entries.c.is_core_region.is_(True))
-    elif core_filter == "noncore":
-        stmt = stmt.where(attributed_entries.c.is_core_region.is_(False))
+    normalized_foreign_filter = normalize_foreign_filter(foreign_filter)
+    if normalized_foreign_filter == "foreign":
+        stmt = stmt.where(attributed_entries.c.is_foreign_worker.is_(True))
+    elif normalized_foreign_filter == "nonforeign":
+        stmt = stmt.where(attributed_entries.c.is_foreign_worker.is_(False))
 
     stmt = stmt.group_by(attributed_entries.c.recipient_country_id)
     rows = (await session.execute(stmt)).all()
@@ -313,6 +267,7 @@ async def get_global_dataset(
             attributed_entries.c.owner_country_id,
             attributed_entries.c.item_code,
             attributed_entries.c.is_core_region,
+            attributed_entries.c.is_foreign_worker,
             attributed_entries.c.tax_income,
             attributed_entries.c.wages_paid,
             attributed_entries.c.transaction_count,
@@ -347,6 +302,7 @@ async def get_global_dataset(
                 "owner_country_name": owner_country.name if owner_country else "Unknown",
                 "item_code": row.item_code or "unknown",
                 "is_core_region": bool(row.is_core_region),
+                "is_foreign_worker": bool(row.is_foreign_worker),
                 "tax_income": decimal_to_float(row.tax_income or Decimal("0")),
                 "wages_paid": decimal_to_float(row.wages_paid or Decimal("0")),
                 "transactions": int(row.transaction_count or 0),
@@ -371,6 +327,19 @@ async def get_game_weekly_income_taxes(
     start, end = resolve_game_week_range(week)
     codes = [code.strip().lower() for code in country_codes or [] if code.strip()]
 
+    base_filters = (
+        WageEventRaw.created_at >= start,
+        WageEventRaw.created_at < end,
+        WageEventRaw.resolved.is_(True),
+        WageEventRaw.income_tax_money.is_not(None),
+        WageEventRaw.operating_country_id.is_not(None),
+    )
+    is_core_region = func.coalesce(WageEventRaw.is_core_region, false())
+    old_rule_filters = (
+        *base_filters,
+        WageEventRaw.created_at < FOREIGN_CITIZEN_TAX_EFFECTIVE_AT,
+        WageEventRaw.region_initial_country_id.is_not(None),
+    )
     resistance_ratio = case(
         (
             (WageEventRaw.region_resistance.is_(None))
@@ -382,45 +351,68 @@ async def get_game_weekly_income_taxes(
         (WageEventRaw.region_resistance > WageEventRaw.region_resistance_max, Decimal("1")),
         else_=WageEventRaw.region_resistance / WageEventRaw.region_resistance_max,
     )
-    core_owner_share = resistance_ratio * Decimal("0.4")
-    occupier_share = Decimal("1") - core_owner_share
-    operating_tax = case(
-        (WageEventRaw.is_core_region.is_(True), WageEventRaw.income_tax_money),
-        else_=WageEventRaw.income_tax_money * occupier_share,
+    old_core_owner_share = resistance_ratio * Decimal("0.4")
+    old_work_country_share = Decimal("1") - old_core_owner_share
+    new_rule_condition = WageEventRaw.created_at >= FOREIGN_CITIZEN_TAX_EFFECTIVE_AT
+    foreign_worker_condition = (
+        new_rule_condition
+        & WageEventRaw.worker_country_id.is_not(None)
+        & (WageEventRaw.worker_country_id != WageEventRaw.operating_country_id)
     )
-    original_country_tax = WageEventRaw.income_tax_money * core_owner_share
-    operating_entries = (
+    new_work_country_share = case(
+        (
+            foreign_worker_condition,
+            Decimal("1") - FOREIGN_CITIZEN_TAX_SHARE,
+        ),
+        else_=Decimal("1"),
+    )
+    old_operating_entries = (
         select(
             WageEventRaw.operating_country_id.label("recipient_country_id"),
-            operating_tax.label("tax_income"),
+            case(
+                (is_core_region.is_(False), WageEventRaw.income_tax_money * old_work_country_share),
+                else_=WageEventRaw.income_tax_money,
+            ).label("tax_income"),
             WageEventRaw.transaction_id.label("transaction_id"),
-        ).where(
-            WageEventRaw.created_at >= start,
-            WageEventRaw.created_at < end,
-            WageEventRaw.resolved.is_(True),
-            WageEventRaw.income_tax_money.is_not(None),
-            WageEventRaw.operating_country_id.is_not(None),
         )
+        .where(*old_rule_filters)
     )
-    original_country_entries = (
+    old_original_country_entries = (
         select(
             WageEventRaw.region_initial_country_id.label("recipient_country_id"),
-            original_country_tax.label("tax_income"),
+            (WageEventRaw.income_tax_money * old_core_owner_share).label("tax_income"),
             WageEventRaw.transaction_id.label("transaction_id"),
-        ).where(
-            WageEventRaw.created_at >= start,
-            WageEventRaw.created_at < end,
-            WageEventRaw.resolved.is_(True),
-            WageEventRaw.income_tax_money.is_not(None),
-            WageEventRaw.region_initial_country_id.is_not(None),
-            WageEventRaw.operating_country_id != WageEventRaw.region_initial_country_id,
-            WageEventRaw.is_core_region.is_(False),
+        )
+        .where(
+            *old_rule_filters,
+            is_core_region.is_(False),
+            WageEventRaw.region_initial_country_id != WageEventRaw.operating_country_id,
             WageEventRaw.region_resistance.is_not(None),
             WageEventRaw.region_resistance > 0,
         )
     )
-    attributed_entries = operating_entries.union_all(original_country_entries).subquery(
-        "game_week_income_entries"
+    new_operating_entries = (
+        select(
+            WageEventRaw.operating_country_id.label("recipient_country_id"),
+            (WageEventRaw.income_tax_money * new_work_country_share).label("tax_income"),
+            WageEventRaw.transaction_id.label("transaction_id"),
+        )
+        .where(*base_filters, new_rule_condition)
+    )
+    new_citizenship_entries = (
+        select(
+            WageEventRaw.worker_country_id.label("recipient_country_id"),
+            (WageEventRaw.income_tax_money * FOREIGN_CITIZEN_TAX_SHARE).label("tax_income"),
+            WageEventRaw.transaction_id.label("transaction_id"),
+        )
+        .where(*base_filters, foreign_worker_condition)
+    )
+    attributed_entries = (
+        old_operating_entries.union_all(
+            old_original_country_entries,
+            new_operating_entries,
+            new_citizenship_entries,
+        ).subquery("game_week_income_entries")
     )
     stmt = (
         select(
@@ -468,7 +460,7 @@ def _apply_country_filters(
     end: datetime,
     item_code: str | None,
     owner_country_id: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> Select[Any]:
     stmt = stmt.where(
         attributed_entries.c.recipient_country_id == country_id,
@@ -479,10 +471,11 @@ def _apply_country_filters(
         stmt = stmt.where(attributed_entries.c.item_code == item_code)
     if owner_country_id:
         stmt = stmt.where(attributed_entries.c.owner_country_id == owner_country_id)
-    if core_filter == "core":
-        stmt = stmt.where(attributed_entries.c.is_core_region.is_(True))
-    elif core_filter == "noncore":
-        stmt = stmt.where(attributed_entries.c.is_core_region.is_(False))
+    normalized_foreign_filter = normalize_foreign_filter(foreign_filter)
+    if normalized_foreign_filter == "foreign":
+        stmt = stmt.where(attributed_entries.c.is_foreign_worker.is_(True))
+    elif normalized_foreign_filter == "nonforeign":
+        stmt = stmt.where(attributed_entries.c.is_foreign_worker.is_(False))
     return stmt
 
 
@@ -494,6 +487,7 @@ def _operating_tax_entries_subquery(start: datetime, end: datetime):
             HourlyTaxRollup.owner_country_id.label("owner_country_id"),
             HourlyTaxRollup.item_code.label("item_code"),
             HourlyTaxRollup.is_core_region.label("is_core_region"),
+            HourlyTaxRollup.is_foreign_worker.label("is_foreign_worker"),
             HourlyTaxRollup.tax_income_sum.label("tax_income"),
             HourlyTaxRollup.wage_money_sum.label("wages_paid"),
             HourlyTaxRollup.transaction_count.label("transaction_count"),
@@ -517,7 +511,7 @@ async def get_country_summary(
     to_value: str | None,
     item_code: str | None,
     owner_country_id: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> dict[str, Any]:
     start, end = resolve_hour_range(from_value, to_value)
     entries = await _get_reference_country_tax_entries(session, country.id, start, end)
@@ -525,7 +519,7 @@ async def get_country_summary(
         entries,
         item_code=item_code,
         owner_country_id=owner_country_id,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     )
     local_counts = await _get_local_country_summary_counts(
         session,
@@ -534,7 +528,7 @@ async def get_country_summary(
         end=end,
         item_code=item_code,
         owner_country_id=owner_country_id,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     )
     tax_income = _sum_reference_entries(filtered_entries, "taxes")
     wages_paid = _sum_reference_entries(filtered_entries, "wages")
@@ -552,15 +546,15 @@ async def get_country_summary(
             "companies": _sum_reference_companies(filtered_entries),
             "workers": local_counts["workers"],
             "items": len({str(entry.get("itemCode")) for entry in filtered_entries if entry.get("itemCode")}),
-            "core_tax_income": decimal_to_float(
+            "non_foreign_tax_income": decimal_to_float(
                 _sum_reference_entries(
-                    [entry for entry in filtered_entries if bool(entry.get("core"))],
+                    [entry for entry in filtered_entries if not bool(entry.get("foreign"))],
                     "taxes",
                 )
             ),
-            "non_core_tax_income": decimal_to_float(
+            "foreign_tax_income": decimal_to_float(
                 _sum_reference_entries(
-                    [entry for entry in filtered_entries if not bool(entry.get("core"))],
+                    [entry for entry in filtered_entries if bool(entry.get("foreign"))],
                     "taxes",
                 )
             ),
@@ -577,7 +571,7 @@ async def get_country_timeseries(
     to_value: str | None,
     item_code: str | None,
     owner_country_id: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> dict[str, Any]:
     start, end = resolve_hour_range(from_value, to_value)
     attributed_entries = _operating_tax_entries_subquery(start, end)
@@ -598,10 +592,11 @@ async def get_country_timeseries(
         stmt = stmt.where(attributed_entries.c.item_code == item_code)
     if owner_country_id:
         stmt = stmt.where(attributed_entries.c.owner_country_id == owner_country_id)
-    if core_filter == "core":
-        stmt = stmt.where(attributed_entries.c.is_core_region.is_(True))
-    elif core_filter == "noncore":
-        stmt = stmt.where(attributed_entries.c.is_core_region.is_(False))
+    normalized_foreign_filter = normalize_foreign_filter(foreign_filter)
+    if normalized_foreign_filter == "foreign":
+        stmt = stmt.where(attributed_entries.c.is_foreign_worker.is_(True))
+    elif normalized_foreign_filter == "nonforeign":
+        stmt = stmt.where(attributed_entries.c.is_foreign_worker.is_(False))
 
     stmt = stmt.group_by(attributed_entries.c.event_hour).order_by(attributed_entries.c.event_hour.asc())
     rows = (await session.execute(stmt)).all()
@@ -626,14 +621,14 @@ async def get_country_item_breakdown(
     from_value: str | None,
     to_value: str | None,
     owner_country_id: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> dict[str, Any]:
     start, end = resolve_hour_range(from_value, to_value)
     entries = _filter_reference_entries(
         await _get_reference_country_tax_entries(session, country.id, start, end),
         item_code=None,
         owner_country_id=owner_country_id,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     )
     total_tax = _sum_reference_entries(entries, "taxes")
     local_counts = await _get_local_country_item_counts(
@@ -642,7 +637,7 @@ async def get_country_item_breakdown(
         start=start,
         end=end,
         owner_country_id=owner_country_id,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     )
     grouped_entries: dict[str, list[dict[str, Any]]] = {}
     for entry in entries:
@@ -675,14 +670,14 @@ async def get_country_owner_breakdown(
     from_value: str | None,
     to_value: str | None,
     item_code: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> dict[str, Any]:
     start, end = resolve_hour_range(from_value, to_value)
     reference_entries = _filter_reference_entries(
         await _get_reference_country_tax_entries(session, country.id, start, end),
         item_code=item_code,
         owner_country_id=None,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     )
     total_tax = _sum_reference_entries(reference_entries, "taxes")
     local_counts = await _get_local_country_owner_counts(
@@ -691,7 +686,7 @@ async def get_country_owner_breakdown(
         start=start,
         end=end,
         item_code=item_code,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     )
     grouped_entries: dict[str, list[dict[str, Any]]] = {}
     for entry in reference_entries:
@@ -750,6 +745,7 @@ async def get_country_dataset(
                 "owner_country_name": owner_country.name if owner_country else "Unknown",
                 "item_code": str(entry.get("itemCode") or "unknown"),
                 "is_core_region": bool(entry.get("core")),
+                "is_foreign_worker": bool(entry.get("foreign")),
                 "tax_income": decimal_to_float(_reference_decimal(entry, "taxes")),
                 "wages_paid": decimal_to_float(_reference_decimal(entry, "wages")),
                 "transactions": int(entry.get("transactions") or 0),
@@ -777,7 +773,7 @@ async def _get_local_country_summary_counts(
     end: datetime,
     item_code: str | None,
     owner_country_id: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> dict[str, int]:
     attributed_entries = _operating_tax_entries_subquery(start, end)
     stmt = _apply_country_filters(
@@ -791,7 +787,7 @@ async def _get_local_country_summary_counts(
         end=end,
         item_code=item_code,
         owner_country_id=owner_country_id,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     )
     row = (await session.execute(stmt)).one()
     return {
@@ -807,7 +803,7 @@ async def _get_local_country_item_counts(
     start: datetime,
     end: datetime,
     owner_country_id: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> dict[str, int]:
     attributed_entries = _operating_tax_entries_subquery(start, end)
     stmt = _apply_country_filters(
@@ -821,7 +817,7 @@ async def _get_local_country_item_counts(
         end=end,
         item_code=None,
         owner_country_id=owner_country_id,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     ).group_by(attributed_entries.c.item_code)
     return {
         str(row[0] or "unknown"): int(row[1] or 0)
@@ -836,7 +832,7 @@ async def _get_local_country_owner_counts(
     start: datetime,
     end: datetime,
     item_code: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> dict[str, int]:
     attributed_entries = _operating_tax_entries_subquery(start, end)
     stmt = _apply_country_filters(
@@ -850,7 +846,7 @@ async def _get_local_country_owner_counts(
         end=end,
         item_code=item_code,
         owner_country_id=None,
-        core_filter=core_filter,
+        foreign_filter=foreign_filter,
     ).group_by(attributed_entries.c.owner_country_id)
     return {
         str(row[0] or "unknown"): int(row[1] or 0)
@@ -888,6 +884,7 @@ async def _get_reference_country_tax_entries(
                 "itemCode": row.item_code,
                 "ownerCountryId": row.owner_country_id,
                 "core": row.is_core_region,
+                "foreign": row.is_foreign_worker,
                 "taxes": float(tax_income),
                 "wages": float(wages_paid),
                 "taxRate": float((tax_income / wages_paid) * Decimal("100")) if wages_paid else 0.0,
@@ -904,17 +901,18 @@ def _filter_reference_entries(
     *,
     item_code: str | None,
     owner_country_id: str | None,
-    core_filter: str,
+    foreign_filter: str,
 ) -> list[dict[str, Any]]:
     filtered = entries
     if item_code:
         filtered = [entry for entry in filtered if entry.get("itemCode") == item_code]
     if owner_country_id:
         filtered = [entry for entry in filtered if entry.get("ownerCountryId") == owner_country_id]
-    if core_filter == "core":
-        filtered = [entry for entry in filtered if bool(entry.get("core"))]
-    elif core_filter == "noncore":
-        filtered = [entry for entry in filtered if not bool(entry.get("core"))]
+    normalized_foreign_filter = normalize_foreign_filter(foreign_filter)
+    if normalized_foreign_filter == "foreign":
+        filtered = [entry for entry in filtered if bool(entry.get("foreign"))]
+    elif normalized_foreign_filter == "nonforeign":
+        filtered = [entry for entry in filtered if not bool(entry.get("foreign"))]
     return filtered
 
 

@@ -26,7 +26,7 @@ const els = {
   countrySelect: document.getElementById("country-select"),
   itemSelect: document.getElementById("item-select"),
   ownerCountrySelect: document.getElementById("owner-country-select"),
-  coreSelect: document.getElementById("core-select"),
+  foreignSelect: document.getElementById("foreign-select"),
   fromInput: document.getElementById("from-input"),
   toInput: document.getElementById("to-input"),
 };
@@ -200,7 +200,9 @@ function selectedAggregateParams({ includeItem = true, includeOwner = true } = {
   if (includeOwner && els.ownerCountrySelect.value) {
     params.set("owner_country", els.ownerCountrySelect.value);
   }
-  if (els.coreSelect.value && els.coreSelect.value !== "all") params.set("core", els.coreSelect.value);
+  if (els.foreignSelect.value && els.foreignSelect.value !== "all") {
+    params.set("foreign", els.foreignSelect.value);
+  }
   return params;
 }
 
@@ -208,21 +210,21 @@ function selectedDatasetFilters() {
   return {
     itemCode: els.itemSelect.value || null,
     ownerCountryId: els.ownerCountrySelect.value || null,
-    coreFilter: els.coreSelect.value || "all",
+    foreignFilter: els.foreignSelect.value || "all",
   };
 }
 
-function datasetEntryMatches(entry, { itemCode, ownerCountryId, coreFilter }) {
+function datasetEntryMatches(entry, { itemCode, ownerCountryId, foreignFilter }) {
   if (itemCode && entry.item_code !== itemCode) {
     return false;
   }
   if (ownerCountryId && entry.owner_country_id !== ownerCountryId) {
     return false;
   }
-  if (coreFilter === "core" && !entry.is_core_region) {
+  if (foreignFilter === "foreign" && !entry.is_foreign_worker) {
     return false;
   }
-  if (coreFilter === "noncore" && entry.is_core_region) {
+  if (foreignFilter === "nonforeign" && entry.is_foreign_worker) {
     return false;
   }
   return true;
@@ -267,8 +269,8 @@ function buildSummaryFromDataset(payload) {
   const entries = filterDatasetEntries(payload.entries ?? []);
   const taxIncome = sumEntries(entries, "tax_income");
   const wagesPaid = sumEntries(entries, "wages_paid");
-  const coreEntries = entries.filter((entry) => entry.is_core_region);
-  const nonCoreEntries = entries.filter((entry) => !entry.is_core_region);
+  const foreignEntries = entries.filter((entry) => entry.is_foreign_worker);
+  const nonForeignEntries = entries.filter((entry) => !entry.is_foreign_worker);
 
   const effectiveRate = wagesPaid ? (taxIncome / wagesPaid) : 0;
 
@@ -285,8 +287,8 @@ function buildSummaryFromDataset(payload) {
       companies: sumEntries(entries, "companies"),
       workers: sumEntries(entries, "workers"),
       items: new Set(entries.map((entry) => entry.item_code).filter(Boolean)).size,
-      core_tax_income: sumEntries(coreEntries, "tax_income"),
-      non_core_tax_income: sumEntries(nonCoreEntries, "tax_income"),
+      foreign_tax_income: sumEntries(foreignEntries, "tax_income"),
+      non_foreign_tax_income: sumEntries(nonForeignEntries, "tax_income"),
       avg_tax_rate: wagesPaid ? effectiveRate * 100 : 0,
     },
   };
@@ -397,7 +399,7 @@ function renderOverview(payload) {
 function renderSummary(payload) {
   const summary = payload.summary ?? {};
   els.countryTitle.textContent = `${payload.country_name} Tax Income`;
-  els.countrySubtitle.textContent = "Wage-derived income tax grouped by item, owner origin, and core-region status.";
+  els.countrySubtitle.textContent = "Wage-derived income tax grouped by item, owner origin, and foreign-worker status.";
 
   const cards = [
     ["Total Tax Income", formatMoney(summary.tax_income), "Income tax captured from wages"],
@@ -405,8 +407,8 @@ function renderSummary(payload) {
     ["Companies", formatInt(summary.companies), "Distinct companies in range"],
     ["Workers", formatInt(summary.workers), "Distinct wage earners in range"],
     ["Items", formatInt(summary.items), "Distinct produced items"],
-    ["Core Region Tax", formatMoney(summary.core_tax_income), "Tax from core regions"],
-    ["Non-Core Tax", formatMoney(summary.non_core_tax_income), "Tax from non-core regions"],
+    ["Non-Foreign Tax", formatMoney(summary.non_foreign_tax_income), "Tax from non-foreign workers"],
+    ["Foreign Tax", formatMoney(summary.foreign_tax_income), "Tax from foreign workers"],
     ["Avg Tax Rate", formatPercent(summary.avg_tax_rate), "Effective income tax rate"],
   ];
 
@@ -726,7 +728,7 @@ els.form.addEventListener("submit", async (event) => {
   }
 });
 
-[els.itemSelect, els.ownerCountrySelect, els.coreSelect].forEach((element) => {
+[els.itemSelect, els.ownerCountrySelect, els.foreignSelect].forEach((element) => {
   element.addEventListener("change", () => {
     handleDatasetFilterChange().catch((error) => {
       if (els.fetchNotice) {

@@ -8,72 +8,35 @@ import warera_monetary_watch.services.analytics as analytics
 from warera_monetary_watch.db.base import Base
 from warera_monetary_watch.db.models import CountryCache, HourlyTaxRollup
 from warera_monetary_watch.services.analytics import (
-    calculate_core_owner_share_ratio,
-    calculate_occupier_share_ratio,
     get_country_dataset,
     resolve_hour_range,
-    split_tax_for_region_control,
     start_of_week_monday_utc,
+)
+from warera_monetary_watch.services.tax_rules import (
+    calculate_citizenship_tax_share,
+    split_tax_for_citizenship,
 )
 
 
-def test_calculate_core_owner_share_ratio_returns_zero_for_unoccupied_regions() -> None:
-    assert calculate_core_owner_share_ratio(
-        is_occupied=False,
-        resistance=Decimal("100"),
-        resistance_max=Decimal("100"),
+def test_calculate_citizenship_tax_share_returns_zero_for_domestic_workers() -> None:
+    assert calculate_citizenship_tax_share(
+        work_country_id="country-work",
+        worker_country_id="country-work",
     ) == Decimal("0")
 
 
-def test_calculate_core_owner_share_ratio_scales_to_forty_percent() -> None:
-    assert calculate_core_owner_share_ratio(
-        is_occupied=True,
-        resistance=Decimal("0"),
-        resistance_max=Decimal("100"),
-    ) == Decimal("0.0")
-    assert calculate_core_owner_share_ratio(
-        is_occupied=True,
-        resistance=Decimal("50"),
-        resistance_max=Decimal("100"),
-    ) == Decimal("0.20")
-    assert calculate_core_owner_share_ratio(
-        is_occupied=True,
-        resistance=Decimal("100"),
-        resistance_max=Decimal("100"),
-    ) == Decimal("0.4")
-
-
-def test_calculate_occupier_share_ratio_scales_to_sixty_percent() -> None:
-    assert calculate_occupier_share_ratio(
-        is_occupied=True,
-        resistance=Decimal("0"),
-        resistance_max=Decimal("100"),
-    ) == Decimal("1.0")
-    assert calculate_occupier_share_ratio(
-        is_occupied=True,
-        resistance=Decimal("50"),
-        resistance_max=Decimal("100"),
-    ) == Decimal("0.80")
-    assert calculate_occupier_share_ratio(
-        is_occupied=True,
-        resistance=Decimal("100"),
-        resistance_max=Decimal("100"),
-    ) == Decimal("0.6")
-
-
-def test_split_tax_for_region_control_splits_between_occupier_and_core_owner() -> None:
-    split = split_tax_for_region_control(
+def test_split_tax_for_citizenship_sends_thirty_percent_to_citizenship_country() -> None:
+    split = split_tax_for_citizenship(
         total_tax=Decimal("10"),
         total_wages=Decimal("100"),
-        is_occupied=True,
-        resistance=Decimal("25"),
-        resistance_max=Decimal("100"),
+        work_country_id="country-work",
+        worker_country_id="country-citizen",
     )
 
-    assert split["core_owner_tax"] == Decimal("1.000")
-    assert split["occupier_tax"] == Decimal("9.000")
-    assert split["core_owner_wages"] == Decimal("10.00")
-    assert split["occupier_wages"] == Decimal("90.00")
+    assert split["citizenship_country_tax"] == Decimal("3.0")
+    assert split["work_country_tax"] == Decimal("7.0")
+    assert split["citizenship_country_wages"] == Decimal("30.0")
+    assert split["work_country_wages"] == Decimal("70.0")
 
 
 def test_resolve_hour_range_treats_to_as_exact_exclusive_boundary() -> None:
@@ -144,6 +107,7 @@ async def test_country_dataset_uses_hourly_rollups_from_database_only() -> None:
                     item_code="steel",
                     owner_country_id=owner_country.id,
                     is_core_region=True,
+                    is_foreign_worker=False,
                     tax_income_sum=Decimal("12.5"),
                     wage_money_sum=Decimal("125"),
                     transaction_count=3,
@@ -172,6 +136,7 @@ async def test_country_dataset_uses_hourly_rollups_from_database_only() -> None:
             "owner_country_name": "Owner Country",
             "item_code": "steel",
             "is_core_region": True,
+            "is_foreign_worker": False,
             "tax_income": 12.5,
             "wages_paid": 125.0,
             "transactions": 3,

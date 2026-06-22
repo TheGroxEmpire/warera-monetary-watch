@@ -67,6 +67,12 @@ ASSET_VERSION = str(
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def resolve_foreign_filter(foreign: str, core: str | None) -> str:
+    if foreign != "all":
+        return foreign
+    return core or foreign
+
+
 def encode_signed_payload(payload: dict[str, object], secret: str) -> str:
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     encoded_body = base64.urlsafe_b64encode(body).rstrip(b"=").decode()
@@ -339,7 +345,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         to: str | None = None,
         item: str | None = None,
         owner_country: str | None = None,
-        core: str = "all",
+        foreign: str = "all",
+        core: str | None = None,
         session: AsyncSession = Depends(session_dependency),
     ) -> dict[str, object]:
         return await get_overview(
@@ -348,7 +355,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             to,
             item_code=item,
             owner_country_id=owner_country,
-            core_filter=core,
+            foreign_filter=resolve_foreign_filter(foreign, core),
         )
 
     @api_router.get("/dataset")
@@ -370,7 +377,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         to: str | None = None,
         item: str | None = None,
         owner_country: str | None = None,
-        core: str = "all",
+        foreign: str = "all",
+        core: str | None = None,
         session: AsyncSession = Depends(session_dependency),
     ) -> dict[str, object]:
         country = await get_country_by_code(session, country_code)
@@ -383,7 +391,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             to_value=to,
             item_code=item,
             owner_country_id=owner_country,
-            core_filter=core,
+            foreign_filter=resolve_foreign_filter(foreign, core),
         )
 
     @api_router.get("/countries/{country_code}/timeseries")
@@ -393,7 +401,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         to: str | None = None,
         item: str | None = None,
         owner_country: str | None = None,
-        core: str = "all",
+        foreign: str = "all",
+        core: str | None = None,
         session: AsyncSession = Depends(session_dependency),
     ) -> dict[str, object]:
         country = await get_country_by_code(session, country_code)
@@ -406,7 +415,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             to_value=to,
             item_code=item,
             owner_country_id=owner_country,
-            core_filter=core,
+            foreign_filter=resolve_foreign_filter(foreign, core),
         )
 
     @api_router.get("/countries/{country_code}/dataset")
@@ -432,7 +441,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = None,
         owner_country: str | None = None,
-        core: str = "all",
+        foreign: str = "all",
+        core: str | None = None,
         session: AsyncSession = Depends(session_dependency),
     ) -> dict[str, object]:
         country = await get_country_by_code(session, country_code)
@@ -444,7 +454,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from_value=from_,
             to_value=to,
             owner_country_id=owner_country,
-            core_filter=core,
+            foreign_filter=resolve_foreign_filter(foreign, core),
         )
 
     @api_router.get("/countries/{country_code}/breakdown/owners")
@@ -453,7 +463,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = None,
         item: str | None = None,
-        core: str = "all",
+        foreign: str = "all",
+        core: str | None = None,
         session: AsyncSession = Depends(session_dependency),
     ) -> dict[str, object]:
         country = await get_country_by_code(session, country_code)
@@ -465,7 +476,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from_value=from_,
             to_value=to,
             item_code=item,
-            core_filter=core,
+            foreign_filter=resolve_foreign_filter(foreign, core),
         )
 
     app.include_router(page_router)

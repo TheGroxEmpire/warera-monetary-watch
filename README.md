@@ -11,7 +11,7 @@ Live site: [https://warera.xorgress.com/monetary-watch](https://warera.xorgress.
 - Live wage-event collector with configurable API rate limits
 - PostgreSQL storage for raw wage events and hourly rollups
 - Global country leaderboard and per-country drilldowns
-- Item, owner-country, core-region, and hourly time-window filters
+- Item, owner-country, foreign-worker, and hourly time-window filters
 - Optional authentik OIDC gate for private deployments
 
 ## Stack

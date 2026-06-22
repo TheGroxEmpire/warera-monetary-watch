@@ -68,6 +68,7 @@ async def test_collected_income_taxes_are_compared_against_game_api_fixture_amou
                 money=Decimal("193748.444794"),
                 quantity=Decimal("1"),
                 seller_user_id="seller-ve",
+                worker_country_id=venezuela.id,
                 buyer_user_id="buyer-ve",
                 seller_company_id="company-ve",
                 operating_region_id="region-ve",
@@ -99,6 +100,85 @@ async def test_collected_income_taxes_are_compared_against_game_api_fixture_amou
         country["country_code"]: country["income_taxes_display"]
         for country in collected["countries"]
     } == {"ve": "16.437K"}
+
+
+@pytest.mark.asyncio
+async def test_weekly_income_taxes_split_foreign_worker_tax_to_citizenship_country() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        work_country = CountryCache(
+            id="country-work",
+            code="wk",
+            name="Work Country",
+            income_tax=Decimal("10"),
+            market_tax=Decimal("0"),
+            self_work_tax=Decimal("0"),
+            payload={},
+        )
+        citizen_country = CountryCache(
+            id="country-citizen",
+            code="ct",
+            name="Citizen Country",
+            income_tax=Decimal("10"),
+            market_tax=Decimal("0"),
+            self_work_tax=Decimal("0"),
+            payload={},
+        )
+        original_country = CountryCache(
+            id="country-original",
+            code="og",
+            name="Original Country",
+            income_tax=Decimal("10"),
+            market_tax=Decimal("0"),
+            self_work_tax=Decimal("0"),
+            payload={},
+        )
+        session.add_all([work_country, citizen_country, original_country])
+        await session.flush()
+        session.add(
+            WageEventRaw(
+                transaction_id="tx-foreign-1",
+                created_at=datetime(2026, 6, 13, 17, 0, tzinfo=UTC),
+                event_hour=datetime(2026, 6, 13, 17, 0, tzinfo=UTC),
+                money=Decimal("100"),
+                quantity=Decimal("1"),
+                seller_user_id="seller-foreign",
+                worker_country_id=citizen_country.id,
+                buyer_user_id="buyer-work",
+                seller_company_id="company-work",
+                operating_region_id="region-work",
+                operating_country_id=work_country.id,
+                region_initial_country_id=original_country.id,
+                owner_country_id=work_country.id,
+                item_code="oil",
+                is_core_region=False,
+                region_resistance=Decimal("100"),
+                region_resistance_max=Decimal("100"),
+                income_tax_rate=Decimal("10"),
+                income_tax_money=Decimal("10"),
+                resolved=True,
+                unresolved_reason=None,
+                raw_payload={},
+            )
+        )
+        await session.commit()
+
+        collected = await get_game_weekly_income_taxes(
+            session,
+            week="2026-24",
+            country_codes=["wk", "ct", "og"],
+        )
+
+    await engine.dispose()
+
+    assert {
+        country["country_code"]: country["income_taxes"]
+        for country in collected["countries"]
+    } == {"ct": 3.0, "wk": 7.0}
 
 
 @pytest.mark.asyncio
