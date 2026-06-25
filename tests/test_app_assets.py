@@ -126,6 +126,21 @@ def test_frontend_fetches_aggregate_tax_endpoints() -> None:
     assert "fetchJson(`/api/v1/countries/${currentCountryCode}/timeseries`" not in app_js
 
 
+def test_deploy_keeps_current_services_running_until_migration_succeeds() -> None:
+    repository_root = STATIC_DIR.parents[2]
+    deploy_script = (repository_root / "scripts" / "deploy.sh").read_text()
+    deploy_workflow = (repository_root / ".github" / "workflows" / "deploy.yml").read_text()
+
+    migrate_index = deploy_script.index('run "${COMPOSE[@]}" run --rm migrate')
+    recreate_index = deploy_script.index(
+        'run "${COMPOSE[@]}" up -d --no-deps --force-recreate web collector'
+    )
+
+    assert migrate_index < recreate_index
+    assert 'run "${COMPOSE[@]}" stop web collector' not in deploy_script
+    assert "command_timeout: 30m" in deploy_workflow
+
+
 def test_reversed_dataset_range_returns_bad_request() -> None:
     app = create_app(
         Settings(

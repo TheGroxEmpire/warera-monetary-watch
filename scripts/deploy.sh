@@ -148,14 +148,13 @@ if [[ "$RUN_BACKUP" -eq 1 ]]; then
   "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "$backup_file"
 fi
 
-run "${COMPOSE[@]}" stop web collector
 run "${COMPOSE[@]}" run --rm migrate
 
 if [[ "$REBUILD_ROLLUPS" -eq 1 ]]; then
   run "${COMPOSE[@]}" run --rm web python -m warera_monetary_watch.maintenance rebuild-rollups
 fi
 
-run "${COMPOSE[@]}" up -d --no-deps web collector
+run "${COMPOSE[@]}" up -d --no-deps --force-recreate web collector
 run "${COMPOSE[@]}" ps
 
 echo

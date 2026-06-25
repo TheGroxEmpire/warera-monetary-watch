@@ -36,6 +36,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT }}
+          command_timeout: 30m
           envs: GH_REF_NAME,GH_REPOSITORY,GH_SHA,GH_TOKEN,GH_RUN_URL,DEPLOY_ENABLE_TRAEFIK
           script_stop: true
           script: |
